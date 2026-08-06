@@ -33,27 +33,11 @@ services:
           [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "YOUR_ELK_SERVER_IP_OR_HOSTNAME" ] && EXTRA_IP="\n      - $PUBLIC_IP"
           [ -n "$DOMAIN" ]    && [ "$DOMAIN" != "" ]                                   && EXTRA_DNS="\n      - $DOMAIN"
 
-          cat > config/certs/instances.yml <<YAML
-instances:
-  - name: elasticsearch
-    dns:
-      - elasticsearch
-      - localhost${EXTRA_DNS}
-    ip:
-      - 127.0.0.1${EXTRA_IP}
-  - name: kibana
-    dns:
-      - kibana
-      - localhost${EXTRA_DNS}
-    ip:
-      - 127.0.0.1${EXTRA_IP}
-  - name: fleet-server
-    dns:
-      - fleet-server
-      - localhost${EXTRA_DNS}
-    ip:
-      - 127.0.0.1${EXTRA_IP}
-YAML
+          printf 'instances:\n  - name: elasticsearch\n    dns:\n      - elasticsearch\n      - localhost%s\n    ip:\n      - 127.0.0.1%s\n  - name: kibana\n    dns:\n      - kibana\n      - localhost%s\n    ip:\n      - 127.0.0.1%s\n  - name: fleet-server\n    dns:\n      - fleet-server\n      - localhost%s\n    ip:\n      - 127.0.0.1%s\n' \
+            "$EXTRA_DNS" "$EXTRA_IP" \
+            "$EXTRA_DNS" "$EXTRA_IP" \
+            "$EXTRA_DNS" "$EXTRA_IP" \
+            > config/certs/instances.yml
 
           echo "==> Certificate SANs:"
           cat config/certs/instances.yml
