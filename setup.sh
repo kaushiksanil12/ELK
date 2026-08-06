@@ -271,25 +271,8 @@ curl -sk \
   -H "Content-Type: application/json" \
   "${KIBANA_URL}/api/fleet/setup" >/dev/null 2>&1
 
-sleep 2
-
-info "Creating Fleet Server Policy..."
-curl -sk \
-  --cacert "${CERT_PATH}" \
-  -u "elastic:${ELASTIC_PASSWORD}" \
-  -X POST \
-  -H "kbn-xsrf: true" \
-  -H "Content-Type: application/json" \
-  "${KIBANA_URL}/api/fleet/agent_policies" \
-  -d '{
-    "name": "Fleet Server Policy",
-    "id": "fleet-server-policy",
-    "namespace": "default",
-    "is_default_fleet_server": true,
-    "monitoring_enabled": ["logs", "metrics"]
-  }' >/dev/null 2>&1
-
-sleep 2
+# Give Kibana a few seconds to build the default policies in its database
+sleep 5
 
 info "Creating Fleet enrollment token..."
 TOKEN_RESPONSE=$(curl -sk \
