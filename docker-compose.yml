@@ -230,6 +230,7 @@ services:
         limits:
           memory: ${FLEET_MEM_LIMIT}
           cpus: "${FLEET_CPU_LIMIT}"
+    restart: unless-stopped
     user: root
     environment:
       - FLEET_SERVER_ENABLE=true
