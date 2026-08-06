@@ -138,7 +138,6 @@ validate_mem() {
 validate_mem "${ES_MEM_LIMIT}"       "ES_MEM_LIMIT"
 validate_mem "${KIBANA_MEM_LIMIT}"   "KIBANA_MEM_LIMIT"
 validate_mem "${FLEET_MEM_LIMIT}"    "FLEET_MEM_LIMIT"
-validate_mem "${AGENT_MEM_LIMIT}"    "AGENT_MEM_LIMIT"
 validate_mem "${ES_JVM_HEAP}"        "ES_JVM_HEAP"
 
 info "Resource limits validated ✓"
