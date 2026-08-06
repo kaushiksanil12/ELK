@@ -67,6 +67,9 @@ services:
           -d "{\"password\":\"${KIBANA_SYSTEM_PASSWORD}\"}"
         echo ""
         echo "==> Setup complete!"
+        # Sleep to ensure Docker Compose has time to poll the healthcheck before exit
+        # This prevents the "container exited (0)" dependency error on subsequent runs.
+        sleep 5
       '
     healthcheck:
       test: ["CMD-SHELL", "[ -f config/certs/elasticsearch/elasticsearch.crt ]"]
