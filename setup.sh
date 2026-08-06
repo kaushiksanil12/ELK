@@ -262,6 +262,18 @@ info "Kibana is available ✓"
 # ─── Generate Fleet enrollment token ──────────────────────────────────────────
 section "Fleet Server — Enrollment Token"
 
+info "Initializing Fleet policies..."
+curl -sk \
+  --cacert "${CERT_PATH}" \
+  -u "elastic:${ELASTIC_PASSWORD}" \
+  -X POST \
+  -H "kbn-xsrf: true" \
+  -H "Content-Type: application/json" \
+  "${KIBANA_URL}/api/fleet/setup" >/dev/null 2>&1
+
+# Give Kibana a few seconds to build the default policies in its database
+sleep 5
+
 info "Creating Fleet enrollment token..."
 TOKEN_RESPONSE=$(curl -sk \
   --cacert "${CERT_PATH}" \
