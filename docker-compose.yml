@@ -175,7 +175,7 @@ services:
       - ${CERTS_VOLUME}:/usr/share/kibana/config/certs
       - ${KIBANA_DATA_VOLUME}:/usr/share/kibana/data
     ports:
-      - "${KIBANA_PORT}:5601"
+      - "127.0.0.1:${KIBANA_PORT}:5601"
     deploy:
       resources:
         limits:
@@ -253,10 +253,39 @@ services:
           "CMD-SHELL",
           "curl -sk https://localhost:${FLEET_SERVER_PORT}/api/status | grep -q HEALTHY"
         ]
-      interval: 15s
-      timeout: 15s
-      retries: 60
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ────────────────────────────────────────────────────
+  #  NGINX & CERTBOT (Public SSL via Let's Encrypt)
+  # ────────────────────────────────────────────────────
+  nginx:
+    image: nginx:latest
+    container_name: nginx
     restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates
+      - ./letsencrypt:/etc/letsencrypt
+      - ./certbot-www:/var/www/certbot
+    environment:
+      - ELK_SERVER_DOMAIN=${ELK_SERVER_DOMAIN}
+      - KIBANA_PORT=${KIBANA_PORT}
+    depends_on:
+      kibana:
+        condition: service_healthy
+
+  certbot:
+    image: certbot/certbot
+    container_name: certbot
+    restart: unless-stopped
+    volumes:
+      - ./letsencrypt:/etc/letsencrypt
+      - ./certbot-www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h & wait ${!}; done;'"
 
 
 volumes:

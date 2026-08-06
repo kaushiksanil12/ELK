@@ -1,0 +1,35 @@
+server {
+    listen 80;
+    server_name ${ELK_SERVER_DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${ELK_SERVER_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${ELK_SERVER_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${ELK_SERVER_DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
+
+    location / {
+        proxy_pass https://kibana:${KIBANA_PORT};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Because internal Kibana uses a self-signed certificate, we tell Nginx to accept it
+        proxy_ssl_verify off; 
+    }
+}

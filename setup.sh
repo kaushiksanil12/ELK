@@ -189,7 +189,29 @@ section "Pulling Docker Images (${STACK_VERSION})"
 docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" pull
 info "Images pulled ✓"
 
-# ─── Start stack ──────────────────────────────────────────────────────────────
+# ─── Provision Initial Let's Encrypt Cert ─────────────────────────────────────
+if [[ -n "${ELK_SERVER_DOMAIN}" ]] && [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP_OR_HOSTNAME" ]] && [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP" ]]; then
+  if [[ ! -d "./letsencrypt/live/${ELK_SERVER_DOMAIN}" ]]; then
+    section "Provisioning initial Let's Encrypt Certificate for ${ELK_SERVER_DOMAIN}"
+    info "Temporarily binding to Port 80 to request certificate..."
+    # Ensure Port 80 is not currently in use by an old nginx container
+    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" stop nginx 2>/dev/null || true
+    
+    docker run -it --rm --name certbot \
+      -v "$(pwd)/letsencrypt:/etc/letsencrypt" \
+      -v "$(pwd)/certbot-www:/var/www/certbot" \
+      -p 80:80 \
+      certbot/certbot certonly --standalone \
+      -d "${ELK_SERVER_DOMAIN}" \
+      --non-interactive --agree-tos -m admin@"${ELK_SERVER_DOMAIN}" || {
+        error "Failed to obtain Let's Encrypt certificate! Please ensure Port 80 is open in your AWS Security Group to 0.0.0.0/0."
+        exit 1
+      }
+    info "Certificate provisioned successfully ✓"
+  fi
+fi
+
+# ─── Start Stack ──────────────────────────────────────────────────────────────
 section "Starting ELK Stack"
 docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --remove-orphans
 info "Containers started ✓"
