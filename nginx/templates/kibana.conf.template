@@ -33,3 +33,72 @@ server {
         proxy_ssl_verify off; 
     }
 }
+
+server {
+    listen 9200 ssl;
+    server_name ${ELK_SERVER_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${ELK_SERVER_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${ELK_SERVER_DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
+
+    # Elasticsearch has a 100MB payload limit default, allow large requests
+    client_max_body_size 100M;
+
+    location / {
+        proxy_pass https://elasticsearch:9200;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        proxy_ssl_verify off; 
+    }
+}
+
+server {
+    listen 8220 ssl;
+    server_name ${ELK_SERVER_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${ELK_SERVER_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${ELK_SERVER_DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
+
+    location / {
+        proxy_pass https://fleet-server:8220;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        proxy_ssl_verify off; 
+    }
+}
+
+server {
+    listen 8200 ssl;
+    server_name ${ELK_SERVER_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${ELK_SERVER_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${ELK_SERVER_DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
+
+    location / {
+        proxy_pass https://fleet-server:8200;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        proxy_ssl_verify off; 
+    }
+}

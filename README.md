@@ -314,17 +314,7 @@ In Kibana: **Management → Fleet → Enrollment Tokens → Create enrollment to
 
 Give it a meaningful name (e.g., `web-servers`, `app-servers`) and copy the token.
 
-### Step 2 — Copy the CA Certificate to the Remote Server
 
-The CA cert is needed so the remote agent trusts the Fleet Server's TLS certificate.
-
-```bash
-# From your local machine or the ELK server
-scp user@elk-server:/path/to/elk/config/certs/ca/ca.crt /tmp/elk-ca.crt
-
-# Then copy to the remote server
-scp /tmp/elk-ca.crt user@remote-server:/tmp/elk-ca.crt
-```
 
 ### Step 3 — Copy and Run `install-agent.sh`
 
@@ -337,9 +327,8 @@ ssh user@remote-server
 
 # Run the installer
 sudo bash /tmp/install-agent.sh \
-  --fleet-url https://10.0.0.5:8220 \
-  --token     AbCdEfGhIjKlMnOpQrStUvWxYz== \
-  --ca-cert   /tmp/elk-ca.crt
+  --fleet-url https://elk.kaushiksanil.bar:8220 \
+  --token     AbCdEfGhIjKlMnOpQrStUvWxYz==
 ```
 
 The script will:
@@ -359,9 +348,8 @@ The new agent should appear as **Healthy** within 30–60 seconds.
 
 | Flag | Required | Description |
 |---|---|---|
-| `--fleet-url` | ✅ Yes | `https://<ELK_SERVER_IP>:8220` |
-| `--token` | ✅ Yes | Enrollment token from Kibana → Fleet |
-| `--ca-cert` | Recommended | Path to `ca.crt` from the ELK server |
+| `--fleet-url` | **Required** | The public URL of the Fleet Server (e.g. `https://elk.domain.com:8220`) |
+| `--token` | **Required** | Enrollment token from Kibana |
 | `--version` | No | Elastic Agent version (default: matches `STACK_VERSION` in `.env`) |
 
 ---
@@ -550,7 +538,7 @@ docker compose logs kibana | tail -50
 **Check:**
 1. Port `8220` is open on the ELK server firewall
 2. `ELK_SERVER_PUBLIC_IP` in `.env` is correct and reachable from the remote server
-3. CA cert path passed to `--ca-cert` is valid
+3. The Fleet URL is accessible from the remote server
 
 **Test connectivity from the remote server:**
 ```bash

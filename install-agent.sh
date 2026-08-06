@@ -14,8 +14,7 @@
 #  Where to get the values:
 #    Fleet URL       : https://<ELK_SERVER_IP>:8220
 #    Enrollment Token: Kibana → Fleet → Enrollment Tokens → Create token
-#    CA cert         : Copy ca.crt from ELK server (config/certs/ca/ca.crt)
-#                      to this remote server and pass the path here.
+#    Enrollment Token: Kibana → Fleet → Enrollment Tokens → Create token
 #
 #  Supported OS: Ubuntu/Debian, RHEL/CentOS/Amazon Linux, macOS
 # =============================================================================
@@ -40,22 +39,20 @@ section() { echo -e "\n${BLUE}${BOLD}──── $* ────${RESET}\n"; }
 # ─── Parse arguments ──────────────────────────────────────────────────────────
 usage() {
   cat <<EOF
-Usage: sudo $0 --fleet-url <URL> --token <TOKEN> [--ca-cert <PATH>] [--version <VER>]
+Usage: sudo $0 --fleet-url <URL> --token <TOKEN> [--version <VER>]
 
 Required:
   --fleet-url   https://<ELK_SERVER_IP>:8220   Fleet Server public URL
   --token       <enrollment_token>              From Kibana → Fleet → Enrollment Tokens
 
 Optional:
-  --ca-cert     /path/to/ca.crt                CA cert copied from ELK server
   --version     8.14.3                          Elastic Stack version (default: ${STACK_VERSION})
   --help        Show this help
 
 Example:
   sudo ./install-agent.sh \\
     --fleet-url https://10.0.0.5:8220 \\
-    --token     AbCdEfGhIjKlMnOpQrStUvWxYz== \\
-    --ca-cert   /tmp/ca.crt
+    --token     AbCdEfGhIjKlMnOpQrStUvWxYz==
 EOF
   exit 0
 }
@@ -64,7 +61,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --fleet-url) FLEET_URL="$2";         shift 2 ;;
     --token)     ENROLLMENT_TOKEN="$2";  shift 2 ;;
-    --ca-cert)   CA_CERT="$2";           shift 2 ;;
     --version)   STACK_VERSION="$2";     shift 2 ;;
     --help)      usage ;;
     *) error "Unknown argument: $1"; usage ;;
@@ -167,54 +163,12 @@ info "Elastic Agent installed ✓"
 # ─── Enroll with Fleet Server ─────────────────────────────────────────────────
 section "Enrolling with Fleet Server"
 info "Fleet URL:  ${FLEET_URL}"
-info "CA cert:    ${CA_CERT:-not provided}"
 echo ""
 
-# Why do we need a CA cert?
-# ─────────────────────────────────────────────────────────────────────────────
-# The ELK server uses a self-signed TLS certificate issued by its own CA.
-# The Fleet Server's cert includes the ELK server's IP and/or domain as SANs,
-# so remote agents CAN verify it — but only if they have the CA cert.
-#
-# Without the CA cert → you must use --insecure (TLS not verified — bad!)
-# With the CA cert    → full TLS verification, no --insecure needed (correct)
-#
-# Get the CA cert from the ELK server:
-#   scp user@elk-server:/path/to/elk/config/certs/ca/ca.crt /tmp/elk-ca.crt
-# ─────────────────────────────────────────────────────────────────────────────
-
-if [[ -n "${CA_CERT}" && -f "${CA_CERT}" ]]; then
-  info "✓ CA cert found — enrolling with full TLS verification"
-  elastic-agent install \
-    --url="${FLEET_URL}" \
-    --enrollment-token="${ENROLLMENT_TOKEN}" \
-    --certificate-authorities="${CA_CERT}" \
-    --non-interactive
-
-elif [[ -n "${CA_CERT}" && ! -f "${CA_CERT}" ]]; then
-  error "CA cert path given but file not found: ${CA_CERT}"
-  error "Copy it from the ELK server first:"
-  error "  scp user@elk-server:/path/to/elk/config/certs/ca/ca.crt /tmp/elk-ca.crt"
-  exit 1
-
-else
-  echo ""
-  warn "═══════════════════════════════════════════════════════════════"
-  warn "  WARNING: No --ca-cert provided."
-  warn "  Falling back to --insecure (TLS certificate NOT verified)."
-  warn "  This is acceptable for testing, NOT for production."
-  warn ""
-  warn "  To fix: copy ca.crt from the ELK server and rerun:"
-  warn "    scp user@elk-server:/path/elk/config/certs/ca/ca.crt /tmp/elk-ca.crt"
-  warn "    sudo $0 --fleet-url ${FLEET_URL} --token <TOKEN> --ca-cert /tmp/elk-ca.crt"
-  warn "═══════════════════════════════════════════════════════════════"
-  echo ""
-  elastic-agent install \
-    --url="${FLEET_URL}" \
-    --enrollment-token="${ENROLLMENT_TOKEN}" \
-    --insecure \
-    --non-interactive
-fi
+elastic-agent install \
+  --url="${FLEET_URL}" \
+  --enrollment-token="${ENROLLMENT_TOKEN}" \
+  --non-interactive
 
 # ─── Enable and start service ──────────────────────────────────────────────────
 section "Starting Elastic Agent Service"
