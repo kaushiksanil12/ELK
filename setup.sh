@@ -197,7 +197,7 @@ if [[ -n "${ELK_SERVER_DOMAIN}" ]] && [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SER
     # Ensure Port 80 is not currently in use by an old nginx container
     docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" stop nginx 2>/dev/null || true
     
-    docker run -it --rm --name certbot \
+    docker run -it --rm --name certbot-init \
       -v "$(pwd)/letsencrypt:/etc/letsencrypt" \
       -v "$(pwd)/certbot-www:/var/www/certbot" \
       -p 80:80 \
