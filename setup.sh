@@ -277,7 +277,7 @@ sleep 5
 info "Updating default Fleet Output for Nginx SSL compatibility..."
 OUTPUT_ID=$(curl -sk --cacert "${CERT_PATH}" -u "elastic:${ELASTIC_PASSWORD}" "${KIBANA_URL}/api/fleet/outputs" | grep -o '"id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
 if [[ -n "${OUTPUT_ID}" ]]; then
-    FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in "./letsencrypt/live/${ELK_SERVER_DOMAIN}/cert.pem" | awk -F"=" '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+    FINGERPRINT=$(sudo openssl x509 -fingerprint -sha256 -noout -in "./letsencrypt/live/${ELK_SERVER_DOMAIN}/cert.pem" | awk -F"=" '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
     
     curl -sk \
       --cacert "${CERT_PATH}" \
