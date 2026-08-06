@@ -210,7 +210,7 @@ services:
   #  FLEET SERVER
   # ────────────────────────────────────────────────────
   fleet-server:
-    image: docker.elastic.co/beats/elastic-agent:${STACK_VERSION}
+    image: docker.elastic.co/elastic-agent/elastic-agent:${STACK_VERSION}
     container_name: fleet-server
     hostname: fleet-server
     depends_on:
