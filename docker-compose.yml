@@ -30,13 +30,13 @@ services:
 
           EXTRA_IP=""
           EXTRA_DNS=""
-          [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "YOUR_ELK_SERVER_IP" ] && [ "$PUBLIC_IP" != "YOUR_ELK_SERVER_IP_OR_HOSTNAME" ] && EXTRA_IP="\n      - $PUBLIC_IP"
-          [ -n "$DOMAIN" ]    && [ "$DOMAIN" != "" ]                                                                               && EXTRA_DNS="\n      - $DOMAIN"
+          [ -n "$$PUBLIC_IP" ] && [ "$$PUBLIC_IP" != "YOUR_ELK_SERVER_IP" ] && [ "$$PUBLIC_IP" != "YOUR_ELK_SERVER_IP_OR_HOSTNAME" ] && EXTRA_IP="\n      - $$PUBLIC_IP"
+          [ -n "$$DOMAIN" ]    && [ "$$DOMAIN" != "" ]                                                                               && EXTRA_DNS="\n      - $$DOMAIN"
 
           printf "instances:\n  - name: elasticsearch\n    dns:\n      - elasticsearch\n      - localhost%s\n    ip:\n      - 127.0.0.1%s\n  - name: kibana\n    dns:\n      - kibana\n      - localhost%s\n    ip:\n      - 127.0.0.1%s\n  - name: fleet-server\n    dns:\n      - fleet-server\n      - localhost%s\n    ip:\n      - 127.0.0.1%s\n" \
-            "$EXTRA_DNS" "$EXTRA_IP" \
-            "$EXTRA_DNS" "$EXTRA_IP" \
-            "$EXTRA_DNS" "$EXTRA_IP" \
+            "$$EXTRA_DNS" "$$EXTRA_IP" \
+            "$$EXTRA_DNS" "$$EXTRA_IP" \
+            "$$EXTRA_DNS" "$$EXTRA_IP" \
             > config/certs/instances.yml
 
           echo "==> Certificate SANs:"

@@ -68,6 +68,15 @@
 | Disk | 20 GB | 100 GB+ |
 | OS | Linux (any), macOS | Ubuntu 22.04 LTS |
 
+**Required Inbound Ports (Firewall):**
+| Port | Protocol | Service | Reason |
+|---|---|---|---|
+| `80` | TCP | HTTP | Let's Encrypt validation & HTTPS redirect |
+| `443` | TCP | HTTPS | Kibana Web UI |
+| `9200` | TCP | Elasticsearch | Direct ES API access (optional) |
+| `8220` | TCP | Fleet Server | Remote Elastic Agents connection |
+| `8200` | TCP | APM Server | APM tracing data ingestion |
+
 **Required software:**
 ```bash
 # Docker Engine (v20.10+)
@@ -471,7 +480,7 @@ scp user@elk-server:/path/to/elk/config/certs/ca/ca.crt /tmp/elk-ca.crt
 | **Encryption keys** | `KIBANA_ENCRYPTION_KEY` and `KIBANA_REPORTING_ENCRYPT_KEY` must be ≥ 32 chars. Changing them makes all saved objects unreadable. |
 | **`.env` file** | Never commit to version control — contains all secrets |
 | **`config/certs/ca.key`** | Never share or commit the private key |
-| **Firewall** | Expose only `5601` (Kibana) and `8220` (Fleet) externally. Never expose `9300` (transport). |
+| **Firewall** | Expose `80`, `443`, `8220`, `8200`, and `9200` as needed. Never expose `9300` (transport). |
 | **Production CA** | For proper production, replace self-signed certs with Let's Encrypt or your internal PKI. See [Elastic TLS docs](https://www.elastic.co/guide/en/elasticsearch/reference/current/security-basic-setup-https.html). |
 
 
