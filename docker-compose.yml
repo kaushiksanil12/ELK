@@ -215,6 +215,7 @@ services:
     image: docker.elastic.co/elastic-agent/elastic-agent:${STACK_VERSION}
     container_name: fleet-server
     hostname: fleet-server
+    profiles: ["fleet"]
     depends_on:
       kibana:
         condition: service_healthy
