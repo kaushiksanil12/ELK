@@ -204,7 +204,8 @@ services:
       timeout: 10s
       retries: 120
     restart: unless-stopped
-
+    extra_hosts:
+      - "${ELK_SERVER_DOMAIN:-localhost}:host-gateway"
 
   # ────────────────────────────────────────────────────
   #  FLEET SERVER
@@ -252,6 +253,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    extra_hosts:
+      - "${ELK_SERVER_DOMAIN:-localhost}:host-gateway"
 
   # ────────────────────────────────────────────────────
   #  NGINX & CERTBOT (Public SSL via Let's Encrypt)
