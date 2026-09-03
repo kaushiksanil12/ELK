@@ -1,0 +1,9 @@
+services:
+  test:
+    image: alpine
+    command: >
+      sh -c '
+        VAR="
+      - test"
+        printf "line1%s\n" "$VAR"
+      '
