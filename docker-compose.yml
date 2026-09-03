@@ -56,7 +56,7 @@ services:
         echo "==> Waiting for Elasticsearch to be ready..."
         until curl -s --cacert config/certs/ca/ca.crt \
               -u "elastic:${ELASTIC_PASSWORD}" \
-              https://elasticsearch:${ES_PORT}/_cluster/health | grep -qE '"status":"(green|yellow)"'; do
+              https://elasticsearch:${ES_PORT}/_cluster/health | grep -qE "\"status\":\"(green|yellow)\""; do
           sleep 5
         done
         echo "==> Setting kibana_system password..."
