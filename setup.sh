@@ -298,16 +298,27 @@ if [[ -n "${OUTPUT_ID}" ]]; then
 fi
 
 info "Creating Fleet enrollment token..."
-TOKEN_RESPONSE=$(curl -sk \
-  --cacert "${CERT_PATH}" \
-  -u "elastic:${ELASTIC_PASSWORD}" \
-  -X POST \
-  -H "kbn-xsrf: true" \
-  -H "Content-Type: application/json" \
-  "${KIBANA_URL}/api/fleet/enrollment_api_keys" \
-  -d '{"policy_id":"fleet-server-policy"}' 2>/dev/null || echo "")
+ATTEMPT=0
+ENROLLMENT_TOKEN=""
+while [ $ATTEMPT -lt 6 ]; do
+  TOKEN_RESPONSE=$(curl -sk \
+    --cacert "${CERT_PATH}" \
+    -u "elastic:${ELASTIC_PASSWORD}" \
+    -X POST \
+    -H "kbn-xsrf: true" \
+    -H "Content-Type: application/json" \
+    "${KIBANA_URL}/api/fleet/enrollment_api_keys" \
+    -d '{"policy_id":"fleet-server-policy"}' 2>/dev/null || echo "")
 
-ENROLLMENT_TOKEN=$(echo "${TOKEN_RESPONSE}" | grep -o '"api_key":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+  ENROLLMENT_TOKEN=$(echo "${TOKEN_RESPONSE}" | grep -o '"api_key":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+  
+  if [[ -n "${ENROLLMENT_TOKEN}" ]]; then
+    break
+  fi
+  
+  ATTEMPT=$((ATTEMPT + 1))
+  sleep 5
+done
 
 if [[ -n "${ENROLLMENT_TOKEN}" ]]; then
   # Persist token back into .env
