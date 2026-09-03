@@ -155,8 +155,6 @@ services:
       interval: 10s
       timeout: 10s
       retries: 120
-    ports:
-      - "127.0.0.1:${ES_PORT}:${ES_PORT}"
     restart: unless-stopped
 
   # ────────────────────────────────────────────────────

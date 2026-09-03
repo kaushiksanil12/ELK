@@ -34,6 +34,24 @@ warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 section() { echo -e "\n${BLUE}${BOLD}──── $* ────${RESET}\n"; }
 
+# Helper: run a curl command inside the elasticsearch container
+escurl() {
+  docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
+    exec -T elasticsearch \
+    curl -s --cacert config/certs/ca/ca.crt \
+    -u "elastic:${ELASTIC_PASSWORD}" \
+    "$@"
+}
+
+# Helper: run a curl command inside the kibana container
+kibcurl() {
+  docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
+    exec -T kibana \
+    curl -sk \
+    -u "elastic:${ELASTIC_PASSWORD}" \
+    "$@"
+}
+
 # ─── Help ─────────────────────────────────────────────────────────────────────
 usage() {
   echo "Usage: $0 [--down] [--clean] [--help]"
@@ -218,14 +236,15 @@ info "Containers started ✓"
 
 # ─── Wait for Elasticsearch ───────────────────────────────────────────────────
 section "Waiting for Elasticsearch"
-ES_URL="https://localhost:${ES_PORT}"
 CERT_PATH="${SCRIPT_DIR}/config/certs/ca/ca.crt"
 
 MAX_RETRIES=60
 ATTEMPT=0
-until curl -sk --cacert "${CERT_PATH}" \
+until docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
+      exec -T elasticsearch \
+      curl -s --cacert config/certs/ca/ca.crt \
       -u "elastic:${ELASTIC_PASSWORD}" \
-      "${ES_URL}/_cluster/health" \
+      "https://localhost:${ES_PORT}/_cluster/health" \
       | grep -qE '"status":"(green|yellow)"' 2>/dev/null; do
   ATTEMPT=$((ATTEMPT + 1))
   if [[ ${ATTEMPT} -ge ${MAX_RETRIES} ]]; then
@@ -238,14 +257,17 @@ until curl -sk --cacert "${CERT_PATH}" \
 done
 echo ""
 info "Elasticsearch is healthy ✓"
+ES_URL="https://localhost:${ES_PORT}"
 
 # ─── Wait for Kibana ──────────────────────────────────────────────────────────
 section "Waiting for Kibana"
 KIBANA_URL="https://localhost:${KIBANA_PORT}"
 ATTEMPT=0
-until curl -sk \
+until docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
+      exec -T kibana \
+      curl -sk \
       -u "elastic:${ELASTIC_PASSWORD}" \
-      "${KIBANA_URL}/api/status" \
+      "https://localhost:5601/api/status" \
       | grep -q '"overall":{"level":"available"' 2>/dev/null; do
   ATTEMPT=$((ATTEMPT + 1))
   if [[ ${ATTEMPT} -ge 60 ]]; then
@@ -263,29 +285,25 @@ info "Kibana is available ✓"
 section "Fleet Server — Enrollment Token"
 
 info "Initializing Fleet..."
-curl -sk \
-  --cacert "${CERT_PATH}" \
-  -u "elastic:${ELASTIC_PASSWORD}" \
+kibcurl \
   -X POST \
   -H "kbn-xsrf: true" \
   -H "Content-Type: application/json" \
-  "${KIBANA_URL}/api/fleet/setup" >/dev/null 2>&1
+  "https://localhost:5601/api/fleet/setup" >/dev/null 2>&1
 
 # Give Kibana a few seconds to build the default policies in its database
 sleep 5
 
 info "Updating default Fleet Output for Nginx SSL compatibility..."
-OUTPUT_ID=$(curl -sk --cacert "${CERT_PATH}" -u "elastic:${ELASTIC_PASSWORD}" "${KIBANA_URL}/api/fleet/outputs" | grep -o '"id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
+OUTPUT_ID=$(kibcurl "https://localhost:5601/api/fleet/outputs" | grep -o '"id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
 if [[ -n "${OUTPUT_ID}" ]]; then
     FINGERPRINT=$(sudo openssl x509 -fingerprint -sha256 -noout -in "./letsencrypt/live/${ELK_SERVER_DOMAIN}/cert.pem" | awk -F"=" '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
     
-    curl -sk \
-      --cacert "${CERT_PATH}" \
-      -u "elastic:${ELASTIC_PASSWORD}" \
+    kibcurl \
       -X PUT \
       -H "kbn-xsrf: true" \
       -H "Content-Type: application/json" \
-      "${KIBANA_URL}/api/fleet/outputs/${OUTPUT_ID}" \
+      "https://localhost:5601/api/fleet/outputs/${OUTPUT_ID}" \
       -d '{
         "name": "default",
         "type": "elasticsearch",
@@ -301,13 +319,11 @@ info "Creating Fleet enrollment token..."
 ATTEMPT=0
 ENROLLMENT_TOKEN=""
 while [ $ATTEMPT -lt 6 ]; do
-  TOKEN_RESPONSE=$(curl -sk \
-    --cacert "${CERT_PATH}" \
-    -u "elastic:${ELASTIC_PASSWORD}" \
+  TOKEN_RESPONSE=$(kibcurl \
     -X POST \
     -H "kbn-xsrf: true" \
     -H "Content-Type: application/json" \
-    "${KIBANA_URL}/api/fleet/enrollment_api_keys" \
+    "https://localhost:5601/api/fleet/enrollment_api_keys" \
     -d '{"policy_id":"fleet-server-policy"}' 2>/dev/null || echo "")
 
   ENROLLMENT_TOKEN=$(echo "${TOKEN_RESPONSE}" | grep -o '"api_key":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
@@ -352,12 +368,10 @@ SETTINGS=$(cat <<EOF
 EOF
 )
 
-SETTINGS_RESP=$(curl -sk \
-  --cacert "${CERT_PATH}" \
-  -u "elastic:${ELASTIC_PASSWORD}" \
+SETTINGS_RESP=$(escurl \
   -X PUT \
   -H "Content-Type: application/json" \
-  "${ES_URL}/_cluster/settings" \
+  "https://localhost:${ES_PORT}/_cluster/settings" \
   -d "${SETTINGS}" || echo "{}")
 
 if echo "${SETTINGS_RESP}" | grep -q '"acknowledged":true'; then
@@ -412,12 +426,10 @@ cat <<EOF
 EOF
 )
 
-ILM_RESP=$(curl -sk \
-  --cacert "${CERT_PATH}" \
-  -u "elastic:${ELASTIC_PASSWORD}" \
+ILM_RESP=$(escurl \
   -X PUT \
   -H "Content-Type: application/json" \
-  "${ES_URL}/_ilm/policy/${ILM_POLICY_NAME}" \
+  "https://localhost:${ES_PORT}/_ilm/policy/${ILM_POLICY_NAME}" \
   -d "${ILM_POLICY}" || echo "{}")
 
 if echo "${ILM_RESP}" | grep -q '"acknowledged":true'; then
@@ -459,12 +471,10 @@ cat <<EOF
 EOF
 )
 
-TEMPL_RESP=$(curl -sk \
-  --cacert "${CERT_PATH}" \
-  -u "elastic:${ELASTIC_PASSWORD}" \
+TEMPL_RESP=$(escurl \
   -X PUT \
   -H "Content-Type: application/json" \
-  "${ES_URL}/_index_template/elk-default-logs" \
+  "https://localhost:${ES_PORT}/_index_template/elk-default-logs" \
   -d "${INDEX_TEMPLATE}" || echo "{}")
 
 if echo "${TEMPL_RESP}" | grep -q '"acknowledged":true'; then
@@ -480,10 +490,8 @@ fi
 # ─── Health Summary ───────────────────────────────────────────────────────────
 section "🎉 ELK Stack is Ready!"
 
-CLUSTER_HEALTH=$(curl -sk \
-  --cacert "${CERT_PATH}" \
-  -u "elastic:${ELASTIC_PASSWORD}" \
-  "${ES_URL}/_cluster/health?pretty" | grep '"status"' | head -1 | tr -d ' ",')
+CLUSTER_HEALTH=$(escurl \
+  "https://localhost:${ES_PORT}/_cluster/health?pretty" | grep '"status"' | head -1 | tr -d ' ",')
 
 echo -e "${BOLD}"
 echo "  ┌──────────────────────────────────────────────────────────────"
