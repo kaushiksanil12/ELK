@@ -195,6 +195,8 @@ services:
       - XPACK_FLEET_ENABLED=true
       - XPACK_FLEET_AGENTS_ELASTICSEARCH_HOSTS=["https://${ELK_SERVER_DOMAIN:-elasticsearch}:${ES_PORT}"]
       - XPACK_FLEET_AGENTS_FLEET_SERVER_HOSTS=["https://${ELK_SERVER_DOMAIN:-fleet-server}:${FLEET_SERVER_PORT}"]
+      - XPACK_FLEET_PACKAGES=[{"name":"fleet_server","version":"latest"},{"name":"system","version":"latest"},{"name":"elastic_agent","version":"latest"}]
+      - "XPACK_FLEET_AGENTPOLICIES=[{\"name\":\"Fleet Server Policy\",\"id\":\"fleet-server-policy\",\"namespace\":\"default\",\"is_default_fleet_server\":true,\"package_policies\":[{\"package\":{\"name\":\"fleet_server\"}}]},{\"name\":\"Default Policy\",\"id\":\"default-policy\",\"namespace\":\"default\",\"is_default\":true,\"package_policies\":[{\"package\":{\"name\":\"system\"}},{\"package\":{\"name\":\"elastic_agent\"}}]}]"
     healthcheck:
       test:
         [
