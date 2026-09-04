@@ -281,74 +281,6 @@ done
 echo ""
 info "Kibana is available ✓"
 
-# ─── Generate Fleet enrollment token ──────────────────────────────────────────
-section "Fleet Server — Enrollment Token"
-
-info "Initializing Fleet..."
-kibcurl \
-  -X POST \
-  -H "kbn-xsrf: true" \
-  -H "Content-Type: application/json" \
-  "https://localhost:5601/api/fleet/setup" >/dev/null 2>&1
-
-# Give Kibana a few seconds to build the default policies in its database
-sleep 5
-
-info "Updating default Fleet Output for Nginx SSL compatibility..."
-OUTPUT_ID=$(kibcurl "https://localhost:5601/api/fleet/outputs" | grep -o '"id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
-if [[ -n "${OUTPUT_ID}" ]]; then
-    FINGERPRINT=$(sudo openssl x509 -fingerprint -sha256 -noout -in "./letsencrypt/live/${ELK_SERVER_DOMAIN}/cert.pem" | awk -F"=" '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
-    
-    kibcurl \
-      -X PUT \
-      -H "kbn-xsrf: true" \
-      -H "Content-Type: application/json" \
-      "https://localhost:5601/api/fleet/outputs/${OUTPUT_ID}" \
-      -d '{
-        "name": "default",
-        "type": "elasticsearch",
-        "hosts": ["https://'${ELK_SERVER_DOMAIN}':9200"],
-        "is_default": true,
-        "is_default_monitoring": true,
-        "ca_trusted_fingerprint": "'${FINGERPRINT}'"
-      }' >/dev/null 2>&1
-  info "Default Fleet Output updated successfully ✓"
-fi
-
-info "Creating Fleet enrollment token..."
-ATTEMPT=0
-ENROLLMENT_TOKEN=""
-while [ $ATTEMPT -lt 6 ]; do
-  TOKEN_RESPONSE=$(kibcurl \
-    -X POST \
-    -H "kbn-xsrf: true" \
-    -H "Content-Type: application/json" \
-    "https://localhost:5601/api/fleet/enrollment_api_keys" \
-    -d '{"policy_id":"fleet-server-policy"}' 2>/dev/null || echo "")
-
-  ENROLLMENT_TOKEN=$(echo "${TOKEN_RESPONSE}" | grep -o '"api_key":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
-  
-  if [[ -n "${ENROLLMENT_TOKEN}" ]]; then
-    break
-  fi
-  
-  ATTEMPT=$((ATTEMPT + 1))
-  sleep 5
-done
-
-if [[ -n "${ENROLLMENT_TOKEN}" ]]; then
-  # Persist token back into .env
-  if grep -q "^FLEET_ENROLLMENT_TOKEN=" "${ENV_FILE}"; then
-    sed -i.bak "s|^FLEET_ENROLLMENT_TOKEN=.*|FLEET_ENROLLMENT_TOKEN=${ENROLLMENT_TOKEN}|" "${ENV_FILE}"
-  else
-    echo "FLEET_ENROLLMENT_TOKEN=${ENROLLMENT_TOKEN}" >> "${ENV_FILE}"
-  fi
-  info "Fleet enrollment token saved to .env ✓"
-  info "Use this token with install-agent.sh on your remote servers."
-else
-  warn "Could not auto-generate Fleet enrollment token."
-  warn "Generate it manually via Kibana → Fleet → Enrollment Tokens."
-fi
 
 # ─── Apply Elasticsearch cluster-level settings ────────────────────────────────
 section "Applying Elasticsearch Cluster Settings"
@@ -360,9 +292,7 @@ SETTINGS=$(cat <<EOF
     "indices.recovery.max_bytes_per_sec":                       "${ES_RECOVERY_MAX_BYTES_PER_SEC}",
     "cluster.routing.allocation.disk.watermark.low":            "${ES_WATERMARK_LOW}",
     "cluster.routing.allocation.disk.watermark.high":           "${ES_WATERMARK_HIGH}",
-    "cluster.routing.allocation.disk.watermark.flood_stage":    "${ES_WATERMARK_FLOOD_STAGE}",
-    "thread_pool.write.queue_size":                             ${ES_THREADPOOL_WRITE_QUEUE},
-    "thread_pool.search.queue_size":                            ${ES_THREADPOOL_SEARCH_QUEUE}
+    "cluster.routing.allocation.disk.watermark.flood_stage":    "${ES_WATERMARK_FLOOD_STAGE}"
   }
 }
 EOF
