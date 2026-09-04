@@ -166,11 +166,24 @@ section "Enrolling with Fleet Server"
 info "Fleet URL:  ${FLEET_URL}"
 echo ""
 
-elastic-agent install \
-  --url="${FLEET_URL}" \
-  --enrollment-token="${ENROLLMENT_TOKEN}" \
-  ${INSECURE_FLAG} \
-  --non-interactive
+if [[ "${OS}" == "deb" || "${OS}" == "rpm" ]]; then
+  # For system packages, the agent is already installed. We just need to enroll it.
+  # We might need to stop it first if it started automatically
+  systemctl stop elastic-agent 2>/dev/null || true
+  
+  elastic-agent enroll \
+    --url="${FLEET_URL}" \
+    --enrollment-token="${ENROLLMENT_TOKEN}" \
+    ${INSECURE_FLAG} \
+    --force
+else
+  # For tarball/macOS, 'install' copies files to the permanent system path and enrolls
+  elastic-agent install \
+    --url="${FLEET_URL}" \
+    --enrollment-token="${ENROLLMENT_TOKEN}" \
+    ${INSECURE_FLAG} \
+    --non-interactive
+fi
 
 # ─── Enable and start service ──────────────────────────────────────────────────
 section "Starting Elastic Agent Service"
