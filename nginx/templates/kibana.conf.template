@@ -22,15 +22,17 @@ server {
     ssl_prefer_server_ciphers on;
     ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
 
+    # Use Docker's internal DNS — resolves container names at request time (not startup)
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
     location / {
-        proxy_pass https://kibana:${KIBANA_PORT};
+        set $kibana_upstream https://kibana:${KIBANA_PORT};
+        proxy_pass $kibana_upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # Because internal Kibana uses a self-signed certificate, we tell Nginx to accept it
-        proxy_ssl_verify off; 
+        proxy_ssl_verify off;
     }
 }
 
@@ -48,14 +50,16 @@ server {
     # Elasticsearch has a 100MB payload limit default, allow large requests
     client_max_body_size 100M;
 
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
     location / {
-        proxy_pass https://elasticsearch:9200;
+        set $es_upstream https://elasticsearch:9200;
+        proxy_pass $es_upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
-        proxy_ssl_verify off; 
+        proxy_ssl_verify off;
     }
 }
 
@@ -70,14 +74,16 @@ server {
     ssl_prefer_server_ciphers on;
     ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
 
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
     location / {
-        proxy_pass https://fleet-server:8220;
+        set $fleet_upstream https://fleet-server:8220;
+        proxy_pass $fleet_upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
-        proxy_ssl_verify off; 
+        proxy_ssl_verify off;
     }
 }
 
@@ -92,13 +98,15 @@ server {
     ssl_prefer_server_ciphers on;
     ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
 
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
     location / {
-        proxy_pass https://fleet-server:8200;
+        set $apm_upstream https://fleet-server:8200;
+        proxy_pass $apm_upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
-        proxy_ssl_verify off; 
+        proxy_ssl_verify off;
     }
 }
