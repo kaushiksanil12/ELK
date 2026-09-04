@@ -226,6 +226,7 @@ services:
       - ./nginx/templates:/etc/nginx/templates
       - ./letsencrypt:/etc/letsencrypt
       - ./certbot-www:/var/www/certbot
+      - ${CERTS_VOLUME}:/certs
     environment:
       - ELK_SERVER_DOMAIN=${ELK_SERVER_DOMAIN}
       - KIBANA_PORT=${KIBANA_PORT}

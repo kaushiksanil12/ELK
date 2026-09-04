@@ -198,7 +198,24 @@ section "Pulling Docker Images (${STACK_VERSION})"
 docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" pull
 info "Images pulled ✓"
 
-# ─── Provision Initial Let's Encrypt Cert ─────────────────────────────────────
+# ─── Select Nginx SSL Mode ────────────────────────────────────────────────────
+section "Configuring Nginx"
+
+NGINX_TMPL_DIR="${SCRIPT_DIR}/nginx/templates"
+
+if [[ -n "${ELK_SERVER_DOMAIN}" ]] && \
+   [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP_OR_HOSTNAME" ]] && \
+   [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP" ]]; then
+  info "Domain mode: using Let's Encrypt certs for ${ELK_SERVER_DOMAIN}"
+  # Ensure only the domain template is active
+  cp "${NGINX_TMPL_DIR}/kibana.conf.template" "${NGINX_TMPL_DIR}/default.conf.template"
+  rm -f "${NGINX_TMPL_DIR}/kibana-ip.conf.template.active"
+else
+  info "IP-only mode: using self-signed certs (ELK_SERVER_DOMAIN not set)"
+  # Ensure only the IP template is active
+  cp "${NGINX_TMPL_DIR}/kibana-ip.conf.template" "${NGINX_TMPL_DIR}/default.conf.template"
+fi
+
 if [[ -n "${ELK_SERVER_DOMAIN}" ]] && [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP_OR_HOSTNAME" ]] && [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP" ]]; then
   if [[ ! -d "./letsencrypt/live/${ELK_SERVER_DOMAIN}" ]]; then
     section "Provisioning initial Let's Encrypt Certificate for ${ELK_SERVER_DOMAIN}"
