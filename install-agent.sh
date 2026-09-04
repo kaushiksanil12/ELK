@@ -109,7 +109,7 @@ info "Stack version: ${STACK_VERSION}"
 # ─── Download Elastic Agent ───────────────────────────────────────────────────
 section "Downloading Elastic Agent ${STACK_VERSION}"
 
-BASE_URL="https://artifacts.elastic.co/downloads/elastic-agent"
+BASE_URL="https://artifacts.elastic.co/downloads/beats/elastic-agent"
 
 case "${OS}" in
   deb)
