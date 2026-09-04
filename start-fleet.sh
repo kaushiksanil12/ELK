@@ -29,21 +29,18 @@ set -a
 source "${SCRIPT_DIR}/.env"
 set +a
 
-# ── Check for enrollment token ─────────────────────────────────────────────────
+# ── Prompt for enrollment token ────────────────────────────────────────────────
+echo -e "${CYAN}${BOLD}Paste your Fleet Server Enrollment Token below.${RESET}"
+warn "Get it from Kibana → Management → Fleet → Add Fleet Server"
+echo ""
+read -rp "  Enrollment Token: " FLEET_SERVER_ENROLLMENT_TOKEN
+
 if [[ -z "${FLEET_SERVER_ENROLLMENT_TOKEN}" ]]; then
-  error "FLEET_SERVER_ENROLLMENT_TOKEN is not set in your .env file!"
-  echo ""
-  warn "Generate it in Kibana:"
-  warn "  1. Go to  https://${ELK_SERVER_DOMAIN}  → Management → Fleet"
-  warn "  2. Click 'Add Fleet Server'"
-  warn "  3. Create a policy named 'Fleet Server Policy'"
-  warn "  4. Copy the enrollment token shown on screen"
-  warn "  5. Add it to your .env:  FLEET_SERVER_ENROLLMENT_TOKEN=\"<token>\""
-  warn "  6. Re-run:  sudo bash ./start-fleet.sh"
+  error "No token provided. Exiting."
   exit 1
 fi
 
-info "Found FLEET_SERVER_ENROLLMENT_TOKEN ✓"
+info "Token received ✓"
 
 # ── Stop any existing fleet-server container ───────────────────────────────────
 if docker ps -a --format '{{.Names}}' | grep -q '^fleet-server$'; then
