@@ -422,6 +422,41 @@ else
   warn "Index template may not have applied. Response: ${TEMPL_RESP}"
 fi
 
+# ─── Fix Fleet Output Fingerprint for Let's Encrypt ────────────────────────────
+if [[ -n "${ELK_SERVER_DOMAIN}" ]]; then
+  section "Configuring Fleet Outputs (Domain Mode)"
+  info "Domain detected. Let's Encrypt will be used by Nginx."
+  info "Clearing self-signed CA fingerprint from Fleet default output..."
+
+  # Force Fleet setup initialization
+  escurl -X POST -H "kbn-xsrf: true" \
+    "https://localhost:${KIBANA_PORT}/api/fleet/setup" >/dev/null 2>&1 || true
+    
+  # Wait a few seconds for Kibana to initialize the fleet-default-output
+  sleep 3
+
+  # Update the default output to remove the auto-populated self-signed fingerprint
+  OUTPUT_RESP=$(escurl \
+    -X PUT \
+    -H "kbn-xsrf: true" \
+    -H "Content-Type: application/json" \
+    "https://localhost:${KIBANA_PORT}/api/fleet/outputs/fleet-default-output" \
+    -d '{
+      "name": "default",
+      "type": "elasticsearch",
+      "is_default": true,
+      "is_default_monitoring": true,
+      "hosts": ["https://'"${ELK_SERVER_DOMAIN}"':'"${ES_PORT}"'"],
+      "ca_trusted_fingerprint": ""
+    }' || echo "{}")
+
+  if echo "${OUTPUT_RESP}" | grep -q '"is_default":true'; then
+    info "Fleet output fingerprint cleared successfully ✓"
+  else
+    warn "Failed to clear Fleet fingerprint. You may need to do it manually in Kibana UI."
+  fi
+fi
+
 # ─── Health Summary ───────────────────────────────────────────────────────────
 section "🎉 ELK Stack is Ready!"
 
