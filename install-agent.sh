@@ -9,11 +9,10 @@
 #    sudo ./install-agent.sh \
 #      --fleet-url   https://<ELK_SERVER_IP>:8220 \
 #      --token       <ENROLLMENT_TOKEN> \
-#      --ca-cert     /path/to/ca.crt              # optional, for TLS verify
+#      --insecure                                 # optional, for IP-only self-signed certs
 #
 #  Where to get the values:
 #    Fleet URL       : https://<ELK_SERVER_IP>:8220
-#    Enrollment Token: Kibana → Fleet → Enrollment Tokens → Create token
 #    Enrollment Token: Kibana → Fleet → Enrollment Tokens → Create token
 #
 #  Supported OS: Ubuntu/Debian, RHEL/CentOS/Amazon Linux, macOS
@@ -23,7 +22,7 @@ set -euo pipefail
 # ─── Defaults (override via flags) ───────────────────────────────────────────
 FLEET_URL=""
 ENROLLMENT_TOKEN=""
-CA_CERT=""
+INSECURE_FLAG=""
 STACK_VERSION="9.5.0"    # Must match the ELK server version
 INSTALL_DIR="/opt/elastic-agent"
 
@@ -47,6 +46,7 @@ Required:
 
 Optional:
   --version     8.14.3                          Elastic Stack version (default: ${STACK_VERSION})
+  --insecure                                    Skip TLS verification (required if using IP instead of domain)
   --help        Show this help
 
 Example:
@@ -62,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --fleet-url) FLEET_URL="$2";         shift 2 ;;
     --token)     ENROLLMENT_TOKEN="$2";  shift 2 ;;
     --version)   STACK_VERSION="$2";     shift 2 ;;
+    --insecure)  INSECURE_FLAG="--insecure"; shift 1 ;;
     --help)      usage ;;
     *) error "Unknown argument: $1"; usage ;;
   esac
@@ -168,6 +169,7 @@ echo ""
 elastic-agent install \
   --url="${FLEET_URL}" \
   --enrollment-token="${ENROLLMENT_TOKEN}" \
+  ${INSECURE_FLAG} \
   --non-interactive
 
 # ─── Enable and start service ──────────────────────────────────────────────────
@@ -200,4 +202,4 @@ echo "  ➜  To unenroll / uninstall:"
 echo "     sudo elastic-agent uninstall"
 echo -e "${RESET}"
 
-warn "TIP: Keep your CA cert (ca.crt) safe — you need it for every new agent."
+warn "TIP: If you enrolled using an IP instead of a domain, ensure you passed --insecure."

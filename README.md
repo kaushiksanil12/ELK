@@ -391,6 +391,7 @@ The new agent should appear as **Healthy** within 30–60 seconds.
 |---|---|---|
 | `--fleet-url` | ✅ | Public URL of Fleet Server (e.g. `https://elk.domain.com:8220`) |
 | `--token` | ✅ | Enrollment token from Kibana |
+| `--insecure` | No | Skip TLS verification (required if using an IP instead of a domain) |
 | `--version` | No | Elastic Agent version (defaults to `STACK_VERSION` from `.env`) |
 
 ---
