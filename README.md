@@ -339,7 +339,17 @@ Paste your Fleet Server Enrollment Token below.
 [INFO]  Fleet Server URL: https://elk.mycompany.com:8220
 ```
 
-### Step 3 — Verify in Kibana
+### Step 3 — Configure Fleet Outputs (CRITICAL)
+
+By default, Kibana tells agents to send their data to `https://elasticsearch:9200`. This works for the local Fleet Server, but **remote agents will fail to connect and go offline**.
+
+You must change this to your public Elasticsearch URL:
+1. Go to **Kibana → Management → Fleet → Settings**
+2. Under **Outputs**, find `default` (Type: Elasticsearch) and click the Edit icon.
+3. Change the **Hosts** field from `https://elasticsearch:9200` to `https://elk.mycompany.com:9200` (or your public IP).
+4. Click **Save and Apply**.
+
+### Step 4 — Verify in Kibana
 
 Go to **Kibana → Management → Fleet → Agents**
 
