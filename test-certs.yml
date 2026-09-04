@@ -1,7 +1,0 @@
-instances:
-  - name: elasticsearch
-    dns:
-      - elasticsearch
-    ip:
-      - 127.0.0.1
-      - YOUR_ELK_SERVER_IP

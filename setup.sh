@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  ELK Stack Setup Script — v8.x with Fleet Server + Elastic Agent
+#  ELK Stack Setup Script — v9.x with Fleet Server + Elastic Agent
 #  Usage:
 #    chmod +x setup.sh
 #    ./setup.sh [--help] [--down] [--clean]
@@ -39,15 +39,6 @@ escurl() {
   docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
     exec -T elasticsearch \
     curl -s --cacert config/certs/ca/ca.crt \
-    -u "elastic:${ELASTIC_PASSWORD}" \
-    "$@"
-}
-
-# Helper: run a curl command inside the kibana container
-kibcurl() {
-  docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
-    exec -T kibana \
-    curl -sk \
     -u "elastic:${ELASTIC_PASSWORD}" \
     "$@"
 }
@@ -236,7 +227,6 @@ info "Containers started ✓"
 
 # ─── Wait for Elasticsearch ───────────────────────────────────────────────────
 section "Waiting for Elasticsearch"
-CERT_PATH="${SCRIPT_DIR}/config/certs/ca/ca.crt"
 
 MAX_RETRIES=60
 ATTEMPT=0
@@ -257,11 +247,9 @@ until docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
 done
 echo ""
 info "Elasticsearch is healthy ✓"
-ES_URL="https://localhost:${ES_PORT}"
 
 # ─── Wait for Kibana ──────────────────────────────────────────────────────────
 section "Waiting for Kibana"
-KIBANA_URL="https://localhost:${KIBANA_PORT}"
 ATTEMPT=0
 until docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
       exec -T kibana \
@@ -427,10 +415,10 @@ echo -e "${BOLD}"
 echo "  ┌──────────────────────────────────────────────────────────────"
 echo "  │  Service          │  URL                                 │"
 echo "  ├──────────────────────────────────────────────────────────────"
-printf "  │  Elasticsearch    │  %-36s  │\n" "https://localhost:${ES_PORT}"
-printf "  │  Kibana           │  %-36s  │\n" "https://localhost:${KIBANA_PORT}"
-printf "  │  Fleet Server     │  %-36s  │\n" "https://localhost:${FLEET_SERVER_PORT}"
-printf "  │  APM Server       │  %-36s  │\n" "https://localhost:${APM_SERVER_PORT}"
+printf "  │  Kibana           │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}"
+printf "  │  Elasticsearch    │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${ES_PORT}"
+printf "  │  Fleet Server     │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${FLEET_SERVER_PORT} (run start-fleet.sh)"
+printf "  │  APM Server       │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${APM_SERVER_PORT}"
 echo  "  ├──────────────────────────────────────────────────────────────"
 printf "  │  Cluster status:  ${CLUSTER_HEALTH:?}  %-36s  │\n" ""
 echo  "  └──────────────────────────────────────────────────────────┘"
