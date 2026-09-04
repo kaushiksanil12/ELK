@@ -167,9 +167,11 @@ info "Fleet URL:  ${FLEET_URL}"
 echo ""
 
 if [[ "${OS}" == "deb" || "${OS}" == "rpm" ]]; then
-  # For system packages, the agent is already installed. We just need to enroll it.
-  # We might need to stop it first if it started automatically
-  systemctl stop elastic-agent 2>/dev/null || true
+  # For system packages, the agent is already installed.
+  # It must be RUNNING for `enroll` to succeed, so ensure it's started:
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl start elastic-agent 2>/dev/null || true
+  sleep 2
   
   elastic-agent enroll \
     --url="${FLEET_URL}" \
