@@ -646,7 +646,40 @@ sudo docker exec elasticsearch curl -sk $CA $AUTH "$ES/_ilm/policy/elk-logs-poli
 
 ---
 
-## 12. Under the Hood: How the Scripts Work
+## 12. AWS S3 Backups & Restores
+
+To ensure you never lose your data, you can automatically stream your Elasticsearch snapshots to an AWS S3 bucket.
+
+### Setting up Automated Daily Backups
+1. Create an AWS S3 Bucket (e.g., `my-elk-backups`) and generate an IAM Access Key with read/write permissions for that bucket.
+2. Add your AWS credentials and bucket details to the bottom of your `.env` file on your ELK server:
+   ```ini
+   AWS_ACCESS_KEY_ID=your_access_key
+   AWS_SECRET_ACCESS_KEY=your_secret_key
+   S3_SNAPSHOT_BUCKET=your_bucket_name
+   S3_SNAPSHOT_REGION=us-east-1
+   ```
+3. Run the automated S3 setup script:
+   ```bash
+   sudo bash ./setup-s3.sh
+   ```
+This script securely injects your AWS credentials into the encrypted Elasticsearch keystore, registers the S3 repository, and configures a **Snapshot Lifecycle Management (SLM)** policy to automatically back up your cluster every day at midnight and retain the backups for 30 days.
+
+### How to Restore Data from a Backup
+If you ever need to restore an index (or check what is inside a backup), you can do it entirely through the Kibana UI—no terminal commands required!
+
+1. Open **Kibana** in your browser.
+2. Navigate to **Management → Stack Management → Snapshot and Restore**.
+3. Click the **Snapshots** tab. You will see a list of all your daily backups stored in S3.
+4. Click on any snapshot to view the indices contained within it.
+5. To restore data, click the **Restore** icon next to the snapshot. A wizard will guide you to:
+   - Select exactly which indices you want to restore (you can restore specific logs or the entire cluster).
+   - Optionally rename the restored indices (e.g., restoring `logs-system` as `restored-logs-system`) so you can investigate the data without overwriting your live logs.
+   - Click **Restore snapshot** and Kibana will stream the data directly back from S3 into your cluster!
+
+---
+
+## 13. Under the Hood: How the Scripts Work
 
 To make this deployment reliable across different environments, much of the complexity is abstracted into three Bash scripts. If you need to debug or customize the stack, here is exactly what each script does.
 
