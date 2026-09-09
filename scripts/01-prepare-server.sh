@@ -20,8 +20,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.env"
-ENV_EXAMPLE="${SCRIPT_DIR}/.env.example"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${ROOT_DIR}/.env"
+ENV_EXAMPLE="${ROOT_DIR}/.env.example"
 
 # ─── Colors & Helpers ─────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -170,14 +171,13 @@ fi
 # ─── 5. Directory Structure & Permissions ─────────────────────────────────────
 section "5. Preparing Directories & Permissions"
 
-mkdir -p "${SCRIPT_DIR}/config/certs"
-mkdir -p "${SCRIPT_DIR}/letsencrypt"
-mkdir -p "${SCRIPT_DIR}/certbot-www"
-mkdir -p "${SCRIPT_DIR}/nginx/templates"
+mkdir -p "${ROOT_DIR}/letsencrypt"
+mkdir -p "${ROOT_DIR}/certbot-www"
+mkdir -p "${ROOT_DIR}/nginx/templates"
 
 # Ensure correct permissions
-chmod 755 "${SCRIPT_DIR}"
-chmod 700 "${SCRIPT_DIR}/config/certs"
+chmod 755 "${ROOT_DIR}"
+chmod 755 "${ROOT_DIR}/scripts"
 
 info "Directory structure verified ✓"
 
@@ -230,10 +230,10 @@ echo "  Your server is fully prepared for the ELK Stack."
 echo ""
 echo "  Next steps to start the stack:"
 echo "    1. Review settings:         nano .env"
-echo "    2. Start the ELK stack:     ./02-start-elk.sh"
-echo "    3. Start Fleet Server:      ./03-start-fleet.sh"
-echo "    4. Configure S3 backup:     ./04-setup-s3-backup.sh"
+echo "    2. Start the ELK stack:     ./scripts/02-start-elk.sh"
+echo "    3. Start Fleet Server:      ./scripts/03-start-fleet.sh"
+echo "    4. Configure S3 backup:     ./scripts/04-setup-s3-backup.sh"
 echo ""
 echo "  To update ILM retention or templates later without running 02-start-elk.sh:"
-echo "    ./update-policies.sh"
+echo "    ./scripts/update-policies.sh"
 echo -e "${RESET}"

@@ -21,14 +21,17 @@ info()    { echo -e "  ${GREEN}✓${RESET} $1"; }
 warn()    { echo -e "  ${YELLOW}!${RESET} $1"; }
 error()   { echo -e "  ${RED}✗${RESET} $1"; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 # --- Load Environment Variables -----------------------------------------------
-if [ ! -f .env ]; then
-  error ".env file not found! Please run 02-start-elk.sh first."
+if [ ! -f "${ROOT_DIR}/.env" ]; then
+  error ".env file not found! Please run ./scripts/01-prepare-server.sh or ./scripts/02-start-elk.sh first."
   exit 1
 fi
 
 # Load variables
-set -a; source .env; set +a
+set -a; source "${ROOT_DIR}/.env"; set +a
 
 if [ -z "${ELASTIC_PASSWORD}" ]; then
   error "ELASTIC_PASSWORD is not set in .env. Cannot authenticate with Elasticsearch."

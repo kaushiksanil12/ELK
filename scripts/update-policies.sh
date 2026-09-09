@@ -17,8 +17,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.env"
-COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${ROOT_DIR}/.env"
+COMPOSE_FILE="${ROOT_DIR}/docker-compose.yml"
 
 # ─── Colours ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -58,7 +59,7 @@ section "Checking Elasticsearch Connection"
 
 if ! docker ps --format '{{.Names}}' | grep -q '^elasticsearch$'; then
   error "The 'elasticsearch' container is not running!"
-  echo "  Start the stack first with: ./02-start-elk.sh"
+  echo "  Start the stack first with: ./scripts/02-start-elk.sh"
   exit 1
 fi
 

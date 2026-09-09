@@ -18,15 +18,16 @@ section "Fleet Server Setup"
 
 # ── Locate script directory ────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ── Check .env ─────────────────────────────────────────────────────────────────
-if [ ! -f "${SCRIPT_DIR}/.env" ]; then
-  error ".env file not found. Please run 02-start-elk.sh first."
+if [ ! -f "${ROOT_DIR}/.env" ]; then
+  error ".env file not found. Please run ./scripts/02-start-elk.sh first."
   exit 1
 fi
 
 set -a
-source "${SCRIPT_DIR}/.env"
+source "${ROOT_DIR}/.env"
 set +a
 
 # ── Prompt for enrollment token ────────────────────────────────────────────────

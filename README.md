@@ -1,26 +1,30 @@
-# Elastic Stack (ELK) — Self-Hosted Production Setup
+# Elastic Stack (ELK) — Self-Hosted Production Setup & Runbook
 
 > **Stack:** Elasticsearch · Kibana · Fleet Server · Nginx (SSL) · Certbot  
 > **Version:** 9.x (configured via `.env`, default `9.5.0`)  
 > **Deployment:** Docker Compose (single-node)  
-> **Agents:** Elastic Agent on remote servers, managed via Fleet
+> **Agents:** Elastic Agent on remote servers, managed via Fleet  
+> **Backups:** Automated daily snapshots to AWS S3 with Snapshot Lifecycle Management (SLM)
 
 ---
 
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)
-2. [Prerequisites](#2-prerequisites)
+2. [Prerequisites & Firewall Ports](#2-prerequisites--firewall-ports)
 3. [Project Structure](#3-project-structure)
 4. [Configuration — `.env` Reference](#4-configuration----env-reference)
-5. [Starting the ELK Server](#5-starting-the-elk-server)
+5. [Step-by-Step Deployment on a Fresh Server](#5-step-by-step-deployment-on-a-fresh-server)
 6. [Setting Up Fleet Server](#6-setting-up-fleet-server)
 7. [Installing Elastic Agent on Remote Servers](#7-installing-elastic-agent-on-remote-servers)
-8. [Managing the Stack](#8-managing-the-stack)
-9. [Security Notes](#9-security-notes)
-10. [Resource Limits Explained](#10-resource-limits-explained)
-11. [Troubleshooting](#11-troubleshooting)
-12. [Under the Hood: How the Scripts Work](#12-under-the-hood-how-the-scripts-work)
+8. [Decoupled Updates: Changing Retention & Settings Live](#8-decoupled-updates-changing-retention--settings-live)
+9. [AWS S3 Backups & Restoring Snapshots](#9-aws-s3-backups--restoring-snapshots)
+10. [Managing the Stack](#10-managing-the-stack)
+11. [Security Notes & TLS](#11-security-notes--tls)
+12. [Resource Limits Explained](#12-resource-limits-explained)
+13. [Production Quirks, Gotchas & Debugging Runbook](#13-production-quirks-gotchas--debugging-runbook)
+14. [Troubleshooting & Handy API Commands](#14-troubleshooting--handy-api-commands)
+15. [Under the Hood: Script Reference](#15-under-the-hood-script-reference)
 
 ---
 
@@ -34,13 +38,13 @@
 │  │                    NGINX (SSL Proxy)               │   │
 │  │   :80  :443  :9200  :8220  :8200                  │   │
 │  └───┬───────────┬──────────┬──────────┬─────────────┘   │
-│      │           │          │          │                   │
+│      │           │          │          │                 │
 │  ┌───▼───┐  ┌────▼───┐  ┌──▼──────┐  └──────────────┐   │
-│  │Kibana │  │  ES    │  │ Fleet   │   Certbot (TLS)   │   │
-│  │:5601  │  │ :9200  │  │ Server  │                   │   │
-│  └───────┘  └────────┘  │  :8220  │                   │   │
-│                          │  :8200  │                   │   │
-│                          └─────────┘                   │   │
+│  │Kibana │  │  ES    │  │ Fleet   │   Certbot (TLS) │   │
+│  │:5601  │  │ :9200  │  │ Server  │                 │   │
+│  └───────┘  └────────┘  │  :8220  │                 │   │
+│                          │  :8200  │                 │   │
+│                          └─────────┘                 │   │
 └──────────────────────────────────────────────────────────┘
                          │ HTTPS (port 8220)
           ┌──────────────┼──────────────┐
@@ -53,722 +57,418 @@
 
 **Key design decisions:**
 
-- **No Logstash** — Elastic Agent ships data directly to Elasticsearch. Parsing is handled via Elasticsearch Ingest Pipelines, which are free, faster, and managed entirely in Kibana.
-- **Elastic Agent is NOT on the ELK server** — It runs on the servers you want to monitor (app, web, DB servers).
-- **Fleet Server** is the control plane — manages agent policies, integrations, and configuration from a central UI in Kibana.
-- **Nginx** terminates public SSL with a Let's Encrypt certificate and proxies to internal containers. Containers themselves use self-signed TLS internally.
-- **Fleet Server is started separately** via `03-start-fleet.sh` after the main stack is running and a Fleet enrollment token has been generated in Kibana.
+- **No Logstash overhead** — Elastic Agent ships logs and metrics directly to Elasticsearch. Transformations and JSON decodes are performed by Elasticsearch Ingest Pipelines, which are faster, lightweight, and managed via Kibana.
+- **Elastic Agent runs on monitored servers** — Not on the ELK server itself. Client servers communicate back to Fleet Server over HTTPS (port `8220`).
+- **Fleet Server** — Centralized control plane in Kibana that manages agent policies, auto-updates integrations, and tracks agent health.
+- **Automated S3 Backups & Lean Local Storage** — Local storage retains 7 days of logs (`ILM_DELETE_AFTER=7d`) for live querying and dashboards, while AWS S3 stores 30 days of daily snapshots cheaply. Snapshots can be restored on demand in minutes.
+- **Dual-Layer TLS** — Nginx terminates public HTTPS with Let's Encrypt certificates (or self-signed if IP-only), while Elasticsearch, Kibana, and Fleet Server communicate over internal self-signed TLS.
 
 ---
 
-## 2. Prerequisites
+## 2. Prerequisites & Firewall Ports
 
-### ELK Server
+### ELK Server Requirements
 
 | Requirement | Minimum | Recommended |
 |---|---|---|
 | CPU | 2 cores | 4+ cores |
 | RAM | 4 GB | 8 GB+ |
-| Disk | 20 GB | 100 GB+ |
-| OS | Linux (any), macOS | Ubuntu 22.04 LTS |
+| Disk | 30 GB SSD | 100 GB+ NVMe / GP3 |
+| OS | Ubuntu 20.04/22.04/24.04, Debian 11/12, RHEL 8/9, Amazon Linux 2023 | Ubuntu 24.04 LTS |
 
-**Required Inbound Firewall Ports:**
+### Required Inbound Firewall Ports (AWS Security Group)
 
 | Port | Protocol | Service | Purpose |
 |---|---|---|---|
-| `80` | TCP | HTTP | Let's Encrypt ACME validation & HTTPS redirect |
+| `80` | TCP | HTTP | Let's Encrypt ACME verification & redirect to 443 |
 | `443` | TCP | HTTPS | Kibana Web UI |
-| `9200` | TCP | Elasticsearch | External ES API access (via Nginx SSL) |
-| `8220` | TCP | Fleet Server | Remote Elastic Agents connect here |
-| `8200` | TCP | APM Server | Application Performance Monitoring ingestion |
+| `9200` | TCP | Elasticsearch | External API ingestion / remote queries (via Nginx SSL) |
+| `8220` | TCP | Fleet Server | Remote Elastic Agents connect here to receive policies |
+| `8200` | TCP | APM Server | Application Performance Monitoring traces (optional) |
 
-> ⚠️ Port `9300` (Elasticsearch transport) must **never** be exposed publicly — it is used only for internal node-to-node communication.
-
-**Required Software:**
-```bash
-# Docker Engine (v20.10+)
-docker --version
-
-# Docker Compose Plugin (v2.x)
-docker compose version
-
-# curl, openssl, unzip (usually pre-installed on Ubuntu)
-curl --version
-```
-
-> **Linux:** After installing Docker, you must also set:
-> ```bash
-> sudo sysctl -w vm.max_map_count=262144
-> echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-elk.conf
-> ```
-> `02-start-elk.sh` does this automatically.
+> ⚠️ **Never expose port `9300`** publicly. It is used exclusively for internal Elasticsearch node-to-node transport.
 
 ### Remote Servers (for Elastic Agent)
-
-| Requirement | Value |
-|---|---|
-| RAM | 256 MB free |
-| OS | Ubuntu/Debian, RHEL/CentOS/Amazon Linux, macOS |
-| Network | Outbound TCP to ELK server on port `8220` |
-| Privileges | `sudo` / root |
+- **RAM**: ~256 MB free
+- **OS**: Linux (Debian, Ubuntu, RHEL, CentOS, Amazon Linux), macOS
+- **Network**: Outbound access to the ELK server on port `8220` and `9200`
 
 ---
 
 ## 3. Project Structure
 
-```
+```text
 elk/
-├── .env                         ← All configuration (DO NOT COMMIT)
+├── .env                         ← Cluster & secret configuration (git-ignored)
 ├── .env.example                 ← Template with production defaults
-├── docker-compose.yml           ← Elasticsearch, Kibana, Nginx, Certbot
+├── docker-compose.yml           ← Elasticsearch, Kibana, Nginx, Certbot services
+├── README.md                    ← Full architectural and operational documentation
+├── .gitignore                   ← Excludes .env and auto-generated runtime certs
 │
-├── 01-prepare-server.sh         ← Step 1: Run ONCE on fresh Linux server (Docker, sysctl, generates .env)
-├── 02-start-elk.sh              ← Step 2: Starts/stops core ELK stack & Nginx SSL proxy 
-├── 03-start-fleet.sh            ← Step 3: Starts Fleet Server container 
-├── 04-setup-s3-backup.sh        ← Step 4: Registers AWS S3 repository & 30d daily SLM 
+├── scripts/                     ← 📁 Operational & Lifecycle Scripts
+│   ├── 01-prepare-server.sh     ← Step 1: Run ONCE on fresh Linux server (Docker, kernel tuning, .env)
+│   ├── 02-start-elk.sh          ← Step 2: Starts/stops core ELK stack & Nginx SSL proxy
+│   ├── 03-start-fleet.sh        ← Step 3: Starts Fleet Server container (run after Kibana is ready)
+│   ├── 04-setup-s3-backup.sh    ← Step 4: Registers AWS S3 repository & 30d daily SLM policy
+│   ├── update-policies.sh       ← Maintenance: Fast live update of ILM & templates in ~1s (no restarts!)
+│   └── install-agent.sh         ← Remote: Run on client servers to ship logs/metrics to Fleet
 │
-├── update-policies.sh           ← Maintenance: Fast live update of ILM & templates in ~1s (no restarts!)
-├── install-agent.sh             ← Remote: Run on client servers to ship logs/metrics to Fleet
-└── nginx/templates/             ← Nginx reverse proxy configurations
+└── nginx/
+    └── templates/               ← Nginx reverse proxy templates (dynamic SSL setup)
+        ├── kibana-domain.conf.tmpl  ← Let's Encrypt domain SSL config
+        └── kibana-ip.conf.tmpl      ← Self-signed IP SSL config (default)
 ```
 
-> ⚠️ **`.env`, `config/certs/`, and `letsencrypt/`** are in `.gitignore` — never commit secrets or private keys.
+> 💡 **Auto-Created Runtime Directories:** Folders like `letsencrypt/` and `certbot-www/` are git-ignored and automatically created at runtime with proper permissions when running `01-prepare-server.sh` or `02-start-elk.sh`.
 
 ---
 
 ## 4. Configuration — `.env` Reference
 
-Copy the example file and edit it before running anything:
+Copy `.env.example` to `.env` (or let `01-prepare-server.sh` generate it with random secure passwords):
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-### 4.1 Stack Version
+### 4.1 Cluster & Security
 
 | Variable | Default | Description |
 |---|---|---|
-| `STACK_VERSION` | `9.5.0` | Elastic Stack version. Must match across the ELK server and all remote agents. |
+| `STACK_VERSION` | `9.5.0` | Elastic Stack version. Must match across all containers and agents. |
+| `CLUSTER_NAME` | `elk-cluster` | Name of the Elasticsearch cluster. |
+| `ELASTIC_PASSWORD` | *(random)* | Password for the built-in `elastic` superuser. |
+| `KIBANA_SYSTEM_PASSWORD` | *(random)* | Password for internal `kibana_system` service user. |
+| `KIBANA_ENCRYPTION_KEY` | *(32+ chars)* | Encrypts saved objects and sessions in Kibana. |
+| `KIBANA_REPORTING_ENCRYPT_KEY` | *(32+ chars)* | Encrypts generated reports in Kibana. |
 
-### 4.2 Cluster Identity
-
-| Variable | Default | Description |
-|---|---|---|
-| `CLUSTER_NAME` | `elk-cluster` | Elasticsearch cluster name |
-| `ELASTICSEARCH_NODE_NAME` | `es-node-01` | Name of this Elasticsearch node |
-
-### 4.3 Security — Passwords & Keys
-
-> ⚠️ **Change all of these before going to production.**
-
-| Variable | Description |
-|---|---|
-| `ELASTIC_PASSWORD` | Password for the built-in `elastic` superuser |
-| `KIBANA_SYSTEM_PASSWORD` | Password for the internal `kibana_system` user (used by Kibana to connect to ES) |
-| `KIBANA_ENCRYPTION_KEY` | **Min 32 characters.** Encrypts Kibana saved objects and sessions. |
-| `KIBANA_REPORTING_ENCRYPT_KEY` | **Min 32 characters.** Encrypts Kibana PDF reports. |
-
-**Generate secure random keys:**
-```bash
-openssl rand -base64 32
-```
-
-### 4.4 Network / Ports
-
-| Variable | Default | Description |
-|---|---|---|
-| `ES_PORT` | `9200` | Elasticsearch HTTPS API port |
-| `KIBANA_PORT` | `5601` | Kibana internal port (accessed via Nginx on 443) |
-| `FLEET_SERVER_PORT` | `8220` | Fleet Server port (remote agents connect here) |
-| `APM_SERVER_PORT` | `8200` | APM Server port (application performance tracing) |
-
-### 4.5 Server Identity (TLS SANs)
-
-These values are injected into every TLS certificate at first run, allowing remote agents to connect with full certificate verification.
+### 4.2 Network & TLS SANs
 
 | Variable | Example | Description |
 |---|---|---|
-| `ELK_SERVER_PUBLIC_IP` | `13.60.236.39` | Public IP of your ELK server |
-| `ELK_SERVER_DOMAIN` | `elk.mycompany.com` | Domain name pointing to your ELK server (used for Let's Encrypt SSL) |
+| `ES_PORT` | `9200` | Elasticsearch HTTPS API port |
+| `KIBANA_PORT` | `5601` | Internal Kibana port (proxied via Nginx 443) |
+| `FLEET_SERVER_PORT` | `8220` | Fleet Server port |
+| `ELK_SERVER_PUBLIC_IP` | `13.60.236.39` | Public IP of your ELK host (baked into TLS certs as SAN) |
+| `ELK_SERVER_DOMAIN` | `elk.mycompany.com` | Domain pointing to this server (triggers Let's Encrypt) |
 
-| Scenario | What to set | Agent `--fleet-url` |
-|---|---|---|
-| Only have an IP | `ELK_SERVER_PUBLIC_IP=10.0.0.5` | `https://10.0.0.5:8220` |
-| Have a domain (recommended) | Set both | `https://elk.mycompany.com:8220` |
-
-> ⚠️ **SANs are baked into the certificate at first run.** If you change these values later, you must run `./02-start-elk.sh --clean` to regenerate certificates (this deletes all data).
-
-### 4.6 JVM Heap Size
+### 4.3 Memory & Limits
 
 | Variable | Default | Description |
 |---|---|---|
-| `ES_JVM_HEAP` | `1g` | Elasticsearch heap size. Sets both `-Xms` and `-Xmx`. |
+| `ES_JVM_HEAP` | `1g` (or `3g`) | Set to ~50% of available RAM (e.g. `3g` on an 8GB machine). |
+| `ES_MEM_LIMIT` | `2g` (or `6g`) | Docker memory limit for Elasticsearch container. |
+| `KIBANA_MEM_LIMIT` | `1g` | Docker memory limit for Kibana container. |
+| `FLEET_MEM_LIMIT` | `512m` | Docker memory limit for Fleet Server container. |
 
-> **Rule of thumb:** 50% of available RAM, max **31g**. Never exceed 31g — JVM compressed oops break above that.
+### 4.4 Ingestion & ILM Retention (Lean S3 Hybrid)
 
-| RAM | `ES_JVM_HEAP` | `ES_MEM_LIMIT` | `KIBANA_MEM_LIMIT` |
-|---|---|---|---|
-| 4 GB | `1g` | `2g` | `1g` |
-| 8 GB | `3g` | `6g` | `1g` |
-| 16 GB | `6g` | `12g` | `2g` |
-| 32 GB | `14g` | `28g` | `2g` |
-
-### 4.7 Docker Resource Limits
-
-| Variable | Default | Description |
+| Variable | Value | Description |
 |---|---|---|
-| `ES_MEM_LIMIT` | `2g` | Hard RAM limit for Elasticsearch container |
-| `ES_CPU_LIMIT` | `2.0` | CPU cores for Elasticsearch |
-| `KIBANA_MEM_LIMIT` | `1g` | Hard RAM limit for Kibana container |
-| `KIBANA_CPU_LIMIT` | `1.0` | CPU cores for Kibana |
-| `FLEET_MEM_LIMIT` | `512m` | Hard RAM limit for Fleet Server container |
-| `FLEET_CPU_LIMIT` | `0.5` | CPU cores for Fleet Server |
-
-### 4.8 Log Retention & ILM
-
-Controls how long data is kept and when it moves between storage tiers.
-
-| Variable | Default | Description |
-|---|---|---|
-| `ILM_ROLLOVER_MAX_AGE` | `1d` | Roll to a new index every day |
-| `ILM_ROLLOVER_MAX_SHARD_SIZE` | `10gb` | Or when a shard hits 10 GB |
-| `ILM_DELETE_AFTER` | `7d` | **Local retention.** Delete local index after 7 days (S3 stores 30d snapshots). |
-| `ES_DEFAULT_REPLICAS` | `0` | Always `0` for single-node (no peers to replicate to) |
-| `ES_REFRESH_INTERVAL` | `5s` | How often new docs become searchable (5s for near real-time live debugging). |
-| `ES_MAPPING_TOTAL_FIELDS_LIMIT` | `2000` | Max fields per index (supports ECS + application JSON fields). |
-| `ES_DYNAMIC_MAPPING` | `true` | `true` auto-creates fields so new container/app log fields are not rejected. |
+| `ILM_ROLLOVER_MAX_AGE` | `1d` | Rolls active index daily to keep shard sizes manageable. |
+| `ILM_ROLLOVER_MAX_SHARD_SIZE` | `10gb` | Rolls index earlier if a shard hits 10 GB. |
+| `ILM_DELETE_AFTER` | `7d` | **Local Retention:** Purges local indices after 7 days (S3 holds 30d snapshots). |
+| `ES_REFRESH_INTERVAL` | `5s` | Documents become searchable every 5 seconds for fast live debugging. |
+| `ES_DYNAMIC_MAPPING` | `true` | Auto-detects new JSON fields so application logs are **never rejected**. |
+| `ES_MAPPING_TOTAL_FIELDS_LIMIT` | `2000` | Supports high field counts (ECS + custom app logs). |
 
 ---
 
-## 5. Starting the ELK Server
+## 5. Step-by-Step Deployment on a Fresh Server
 
-### Step 1 — Configure `.env`
-
+### Step 1 — Prepare the Host Machine
+Run the preparation script on a clean Linux server:
 ```bash
-cp .env.example .env
+sudo ./scripts/01-prepare-server.sh
+```
+This script automatically:
+1. Installs Docker Engine and the Docker Compose plugin.
+2. Configures and persists `vm.max_map_count=262144` and security limits in `/etc/sysctl.d/99-elk.conf`.
+3. Installs `curl`, `openssl`, `jq`, and `unzip`.
+4. Generates a secure `.env` file with strong, 32-character random passwords if none exists.
+
+### Step 2 — Review Configuration
+Inspect and customize `.env` (ensure IP or domain is set):
+```bash
 nano .env
 ```
 
-Minimum required changes:
+### Step 3 — Start the ELK Stack
+Launch the core containers:
 ```bash
-ELASTIC_PASSWORD=your_strong_password_here
-KIBANA_SYSTEM_PASSWORD=another_strong_password
-KIBANA_ENCRYPTION_KEY=a-random-string-of-at-least-32-chars
-KIBANA_REPORTING_ENCRYPT_KEY=another-random-32-char-string
-ELK_SERVER_PUBLIC_IP=13.60.236.39       # your ELK server's public IP
-ELK_SERVER_DOMAIN=elk.mycompany.com     # domain pointing to ELK server
-ES_JVM_HEAP=3g                          # ~50% of your RAM
-ES_MEM_LIMIT=6g                         # ~2x the heap
+./scripts/02-start-elk.sh
 ```
+This script will:
+1. Provision SSL certificates (via Let's Encrypt for domains or self-signed for IPs).
+2. Start Elasticsearch, Kibana, Nginx, and Certbot.
+3. Wait for Elasticsearch and Kibana health checks to turn green/available.
+4. Apply cluster settings, ILM policies, and index templates.
 
-### Step 2 — Run 02-start-elk.sh
+### Step 4 — Log into Kibana
+Open in your browser:
+* **With Domain:** `https://elk.mycompany.com`
+* **With IP:** `https://<YOUR_ELK_SERVER_IP>`
 
-```bash
-./02-start-elk.sh
-```
-*(or [0;36m[1m
-  ███████╗██╗     ██╗  ██╗
-  ██╔════╝██║     ██║ ██╔╝
-  █████╗  ██║     █████╔╝ 
-  ██╔══╝  ██║     ██╔═██╗ 
-  ███████╗███████╗██║  ██╗
-  ╚══════╝╚══════╝╚═╝  ╚═╝  Stack Setup — v9.x
-[0m
-
-[0;34m[1m──── Pre-flight Checks ────[0m
-
-[0;32m[INFO][0m  Docker:         Docker version 27.3.1, build ce12230
-[0;32m[INFO][0m  Docker Compose: Docker Compose version v2.30.3-desktop.1
-[0;32m[INFO][0m  .env loaded: STACK_VERSION=9.5.0, CLUSTER=elk-cluster
-
-[0;34m[1m──── Validating Configuration ────[0m
-
-[1;33m[WARN][0m  You are using DEFAULT PASSWORDS. Change them in .env before production use!
-[0;32m[INFO][0m  All required variables validated ✓
-
-[0;34m[1m──── Validating Resource Limits ────[0m
-
-[0;32m[INFO][0m    ES_MEM_LIMIT = 2g ✓
-[0;32m[INFO][0m    KIBANA_MEM_LIMIT = 1g ✓
-[0;32m[INFO][0m    FLEET_MEM_LIMIT = 512m ✓
-[0;32m[INFO][0m    ES_JVM_HEAP = 1g ✓
-[0;32m[INFO][0m  Resource limits validated ✓
-
-[0;34m[1m──── System Requirements ────[0m
-
-[0;32m[INFO][0m  macOS detected — Docker Desktop handles vm.max_map_count automatically ✓
-
-[0;34m[1m──── Creating Directories ────[0m
-
-[0;32m[INFO][0m  Directories ready ✓
-
-[0;34m[1m──── Pulling Docker Images (9.5.0) ────[0m
-
-[0;32m[INFO][0m  Images pulled ✓
-
-[0;34m[1m──── Configuring Nginx ────[0m
-
-[0;32m[INFO][0m  IP-only mode: using self-signed certs (ELK_SERVER_DOMAIN not set)
-
-[0;34m[1m──── Starting ELK Stack ────[0m
-
-[0;32m[INFO][0m  Containers started ✓
-
-[0;34m[1m──── Waiting for Elasticsearch ────[0m
-
-
-[0;32m[INFO][0m  Elasticsearch is healthy ✓
-
-[0;34m[1m──── Waiting for Kibana ────[0m
-
-
-[0;32m[INFO][0m  Kibana is available ✓)*
-
-The script will automatically:
-1. ✅ Validate all required environment variables
-2. ✅ Check Docker version and system requirements
-3. ✅ Set `vm.max_map_count` on Linux
-4. ✅ Pull all Docker images
-5. ✅ Generate TLS certificates with your IP/domain as SANs
-6. ✅ Start Elasticsearch and wait for it to be healthy
-7. ✅ Set the `kibana_system` password
-8. ✅ Start Kibana and wait for it to be available
-9. ✅ Start Nginx (SSL reverse proxy) and Certbot (auto-renewing Let's Encrypt)
-10. ✅ Apply cluster-level settings (watermarks, circuit breakers)
-11. ✅ Apply ILM policy and index template
-12. ✅ Print a service summary
-
-### Step 3 — Access Kibana
-
-Once complete, open:
-```
-https://elk.mycompany.com
-```
-Or via IP:
-```
-https://13.60.236.39
-```
-
-Login with:
-- **Username:** `elastic`
-- **Password:** value of `ELASTIC_PASSWORD` in `.env`
+Login credentials:
+* **Username:** `elastic`
+* **Password:** *(value of `ELASTIC_PASSWORD` in `.env`)*
 
 ---
 
 ## 6. Setting Up Fleet Server
 
-Fleet Server is started **separately** after the main stack is running, because it requires an enrollment token that can only be generated from Kibana.
+Fleet Server connects to Kibana and Elasticsearch to manage all remote agents.
 
-### Step 1 — Generate an enrollment token in Kibana
+### Step 1 — Generate a Fleet Server Token in Kibana
+1. Open Kibana → **Management → Fleet**.
+2. Click **"Add Fleet Server"**.
+3. Create a policy:
+   * **Name**: `Fleet Server Policy`
+   * **Policy ID**: `fleet-server-policy`
+4. Click **"Generate Fleet Server policy"** and copy the **Service Token**.
 
-1. Open Kibana → **Management → Fleet**
-2. Click **"Add Fleet Server"**
-3. Create a new policy:
-   - **Name:** `Fleet Server Policy`
-   - **Policy ID:** `fleet-server-policy` ← must match exactly
-4. Click **"Generate Fleet Server policy"**
-5. Copy the **enrollment token** shown on screen
-
-### Step 2 — Run 03-start-fleet.sh
-
+### Step 2 — Launch Fleet Server
+Run the startup script:
 ```bash
-./03-start-fleet.sh
+./scripts/03-start-fleet.sh
 ```
+Paste the token when prompted. The script connects Fleet Server to the internal Docker network and registers it with Kibana.
 
-The script will:
-- Prompt you to paste the enrollment token directly in the terminal
-- Auto-detect the Docker network and volumes used by the main stack
-- Start the `fleet-server` container connected to the same network
-- Wait and confirm Fleet Server becomes `HEALTHY`
-
-```
-──── Fleet Server Setup ────
-
-Paste your Fleet Server Enrollment Token below.
-[WARN]  Get it from Kibana → Management → Fleet → Add Fleet Server
-
-  Enrollment Token: <paste here>
-
-[INFO]  Token received ✓
-[INFO]  Starting Fleet Server container...
-[INFO]  Fleet Server is HEALTHY ✓
-[INFO]  Fleet Server URL: https://elk.mycompany.com:8220
-```
-
-### Step 3 — Configure Fleet Outputs (CRITICAL)
-
-By default, Kibana tells agents to send their data to `https://elasticsearch:9200`. This works for the local Fleet Server, but **remote agents will fail to connect and go offline**.
-
-You must change this to your public Elasticsearch URL:
-1. Go to **Kibana → Management → Fleet → Settings**
-2. Under **Outputs**, find `default` (Type: Elasticsearch) and click the Edit icon.
-3. Change the **Hosts** field from `https://elasticsearch:9200` to `https://elk.mycompany.com:9200` (or your public IP).
+### Step 3 — Update Fleet Output Host (Crucial)
+By default, Kibana sets the Elasticsearch output to `https://elasticsearch:9200`, which remote agents cannot reach.
+1. In Kibana, go to **Management → Fleet → Settings**.
+2. Under **Outputs**, click the edit icon for `default`.
+3. Change **Hosts** to your public URL:
+   ```text
+   https://elk.mycompany.com:9200
+   ```
+   *(or `https://<YOUR_PUBLIC_IP>:9200`)*
 4. Click **Save and Apply**.
-
-### Step 4 — Verify in Kibana
-
-Go to **Kibana → Management → Fleet → Agents**
-
-The Fleet Server itself should appear as a connected agent with status **Healthy**.
 
 ---
 
 ## 7. Installing Elastic Agent on Remote Servers
 
-Elastic Agent runs on each server you want to monitor — **not** on the ELK server.
+Run this on any external application server, web server, or database host you want to monitor.
 
-### Step 1 — Get an enrollment token for your agents
+### Step 1 — Get an Enrollment Token
+In Kibana: **Management → Fleet → Enrollment Tokens → Create enrollment token** (e.g. `production-vms`).
 
-In Kibana: **Management → Fleet → Enrollment Tokens → Create enrollment token**
-
-Give it a meaningful name (e.g., `web-servers`, `app-servers`) and copy the token.
-
-### Step 2 — Copy and run install-agent.sh
+### Step 2 — Run the Remote Installer
+Copy `scripts/install-agent.sh` to the remote server and run:
 
 ```bash
-# Copy the script to the remote server
-scp install-agent.sh user@remote-server:/tmp/
-
-# SSH into the remote server
-ssh user@remote-server
-
-# Run the installer
-sudo bash /tmp/install-agent.sh \
+# On your remote host:
+sudo ./install-agent.sh \
   --fleet-url https://elk.mycompany.com:8220 \
-  --token     <enrollment-token-from-kibana>
+  --token     <YOUR_ENROLLMENT_TOKEN>
 ```
+*(Add `--insecure` if connecting via IP address with a self-signed certificate).*
 
-The script will:
-1. Detect OS and CPU architecture automatically (Ubuntu/Debian, RHEL/CentOS/Amazon Linux, macOS)
-2. Download the correct Elastic Agent package for this stack version
-3. Install via system package manager (`dpkg`, `rpm`, or `tar`)
-4. Enroll the agent with Fleet Server using the provided token
-5. Start and enable the `elastic-agent` systemd service
-
-### Step 3 — Verify in Kibana
-
-**Kibana → Management → Fleet → Agents**
-
-The new agent should appear as **Healthy** within 30–60 seconds.
-
-### install-agent.sh Options
-
-| Flag | Required | Description |
-|---|---|---|
-| `--fleet-url` | ✅ | Public URL of Fleet Server (e.g. `https://elk.domain.com:8220`) |
-| `--token` | ✅ | Enrollment token from Kibana |
-| `--insecure` | No | Skip TLS verification (required if using an IP instead of a domain) |
-| `--version` | No | Elastic Agent version (defaults to `STACK_VERSION` from `.env`) |
+The agent will download, install as a `systemd` service, enroll with Fleet, and begin streaming system metrics and container logs immediately.
 
 ---
 
-## 8. Managing the Stack
+## 8. Decoupled Updates: Changing Retention & Settings Live
 
-### Start the stack
-```bash
-sudo ./02-start-elk.sh
-```
+You **never** have to rerun `02-start-elk.sh` or restart containers just to change retention, refresh intervals, or mapping rules.
 
-### Start Fleet Server (after 02-start-elk.sh)
-```bash
-./03-start-fleet.sh
-```
+1. Edit the settings in `.env`:
+   ```bash
+   nano .env
+   # E.g. change ILM_DELETE_AFTER=14d
+   # E.g. change ES_REFRESH_INTERVAL=2s
+   ```
+2. Run the policy updater:
+   ```bash
+   ./scripts/update-policies.sh
+   ```
+3. Elasticsearch updates the live ILM policy and index template via API in **~1 second with zero downtime**.
 
-### Stop the stack (data preserved)
-```bash
-sudo ./02-start-elk.sh --down
-```
-
-### Destroy everything — containers AND all data
-```bash
-sudo ./02-start-elk.sh --clean
-# ⚠️  Deletes all Elasticsearch data, Kibana saved objects, and TLS certificates.
-```
-
-### View live logs
-```bash
-sudo docker compose logs -f                    # all services
-sudo docker compose logs -f elasticsearch
-sudo docker compose logs -f kibana
-sudo docker logs -f fleet-server
-```
-
-### Restart a single service
-```bash
-sudo docker compose restart kibana
-sudo docker compose restart elasticsearch
-sudo docker restart fleet-server
-```
-
-### Check container status
-```bash
-sudo docker ps -a
-```
-
-### Check remote agent status (on the remote server)
-```bash
-sudo elastic-agent status
-sudo journalctl -u elastic-agent -f     # view agent logs
-```
-
-### Unenroll and uninstall agent (on the remote server)
-```bash
-sudo elastic-agent uninstall
-```
+*(You can also use `./scripts/02-start-elk.sh --policies-only`).*
 
 ---
 
-## 9. Security Notes
+## 9. AWS S3 Backups & Restoring Snapshots
 
-### 9.1 TLS Architecture
+### 9.1 Configuring Automated Daily Backups
+1. Create an AWS S3 bucket (e.g. `my-company-elk-backups`) and generate IAM credentials with S3 read/write permissions.
+2. Add your AWS details to `.env`:
+   ```ini
+   AWS_ACCESS_KEY_ID=AKIA...
+   AWS_SECRET_ACCESS_KEY=wJalr...
+   S3_SNAPSHOT_BUCKET=my-company-elk-backups
+   S3_SNAPSHOT_REGION=us-east-1
+   ```
+3. Run the S3 configuration script:
+   ```bash
+   ./scripts/04-setup-s3-backup.sh
+   ```
+This securely adds the keys to the Elasticsearch keystore, registers the `s3_backup` repository, and creates an automated daily Snapshot Lifecycle Management (SLM) policy that runs every midnight and retains snapshots for 30 days.
 
-This stack uses a **two-layer TLS** approach:
+### 9.2 Restoring Snapshots from S3 Without Conflicts
+If you need to view old logs from S3:
 
-| Layer | Certificate | Purpose |
-|---|---|---|
-| **Public (Nginx)** | Let's Encrypt (trusted by all browsers) | Terminates public HTTPS on 443, 9200, 8220, 8200 |
-| **Internal (self-signed)** | Auto-generated CA + node certs | Secures container-to-container communication |
+1. In Kibana, go to **Management → Stack Management → Snapshot and Restore**.
+2. Click the **Snapshots** tab and click on the snapshot you want to restore.
+3. Click the **Restore** button.
+4. **Important configuration to avoid index collision with active data streams**:
+   * **Data streams and indices**: Choose *Selected data streams and indices* (e.g. `logs-docker.container_logs-*`).
+   * **Rename data streams and indices**: Toggle **ON**
+     * **Capture pattern**: `(.+)`
+     * **Replacement pattern**: `restored_$1`
+   * **Restore global state**: **OFF** (Do not overwrite active cluster settings)
+   * **Restore feature state**: **OFF** (Do not overwrite current users/security)
+5. Click **Next** through the steps and click **Restore snapshot**.
+6. In Kibana **Data Views**, create a data view for `restored_*` to search the restored historical data in **Discover**!
 
-Remote agents connect to Nginx's Let's Encrypt certificate — no custom CA needed on agent machines.
+---
 
-### 9.2 Subject Alternative Names (SANs)
+## 10. Managing the Stack
 
-At certificate generation time, `02-start-elk.sh` injects your server's **public IP** and **domain name** into every internal certificate as a SAN. This enables full TLS verification without `--insecure`.
-
-```bash
-# In .env
-ELK_SERVER_PUBLIC_IP=13.60.236.39
-ELK_SERVER_DOMAIN=elk.mycompany.com
-```
-
-> ⚠️ **SANs are baked into certs at first run.** To change them:
-> ```bash
-> sudo ./02-start-elk.sh --clean   # destroys all data
-> # Edit .env with new IP/domain
-> sudo ./02-start-elk.sh           # regenerates certs with new SANs
-> ```
-
-### 9.3 Security Checklist
-
-| Item | Action |
+| Task | Command |
 |---|---|
-| **Passwords** | Change `ELASTIC_PASSWORD` and `KIBANA_SYSTEM_PASSWORD` before production |
-| **Encryption keys** | `KIBANA_ENCRYPTION_KEY` and `KIBANA_REPORTING_ENCRYPT_KEY` must be ≥ 32 chars. Changing them makes all saved objects unreadable — set them once and keep them safe. |
-| **`.env` file** | Never commit to version control. Contains all secrets. |
-| **Firewall** | Expose only `80`, `443`, `9200`, `8220`, `8200`. Never expose `9300` (ES transport). |
-| **`ca.key`** | Never share or commit the private key from `config/certs/ca/ca.key`. |
+| **Start / Restart Stack** | `./scripts/02-start-elk.sh` |
+| **Stop Stack (Data Preserved)** | `./scripts/02-start-elk.sh --down` |
+| **Destroy Stack & Volumes (Data Loss)** | `./scripts/02-start-elk.sh --clean` |
+| **Update Policies (ILM, Templates)** | `./scripts/update-policies.sh` |
+| **Start Fleet Server** | `./scripts/03-start-fleet.sh` |
+| **View Live Container Logs** | `docker compose logs -f [service_name]` |
+| **Check Container Health** | `docker compose ps` |
+| **Check Remote Agent Status** | `sudo elastic-agent status` (on remote host) |
 
 ---
 
-## 10. Resource Limits Explained
+## 11. Security Notes & TLS
 
-### Why lock JVM heap (`-Xms == -Xmx`)?
+### Dual-Layer TLS Architecture
+* **Public Layer (Nginx)**: Serves a public Let's Encrypt certificate on ports `443`, `9200`, `8220`, and `8200`. Remote agents and browsers validate this certificate using standard root CAs.
+* **Internal Layer**: Internal container communication (Elasticsearch, Kibana, Fleet Server) is secured using a private root CA generated at startup in the `certs` Docker volume.
 
-Setting minimum and maximum heap to the **same value** prevents the JVM from dynamically resizing the heap, which causes GC pauses. This is the official Elastic recommendation for production.
-
-### Why `bootstrap.memory_lock=true`?
-
-Tells the OS not to swap the JVM heap to disk. Swapping causes severe Elasticsearch performance degradation and can cause cluster instability.
-
-### Why circuit breakers?
-
-Without circuit breakers, a large aggregation query could load the entire fielddata into memory and crash Elasticsearch with an OOM error. Circuit breakers reject the request early with a `429` response instead.
-
-### Why `thread_pool` settings in `docker-compose.yml` (not the API)?
-
-Elasticsearch 9.x no longer allows `thread_pool.write.queue_size` and `thread_pool.search.queue_size` to be updated dynamically via the cluster settings API. They must be set as container environment variables at startup, which is what this stack does.
+### Security Checklist
+* [ ] Change `ELASTIC_PASSWORD` and `KIBANA_SYSTEM_PASSWORD` in `.env`.
+* [ ] Ensure `KIBANA_ENCRYPTION_KEY` and `KIBANA_REPORTING_ENCRYPT_KEY` are at least 32 characters.
+* [ ] Ensure port `9300` is **blocked** by your firewall/security group.
+* [ ] Keep `.env` restricted: `chmod 600 .env`.
 
 ---
 
-## 11. Troubleshooting
+## 12. Resource Limits Explained
 
-### Elasticsearch fails to start
+- **`ES_JVM_HEAP` (`-Xms == -Xmx`)**: Setting minimum and maximum heap identical prevents JVM heap resizing during log ingestion spikes, eliminating major GC pauses.
+- **`bootstrap.memory_lock=true`**: Locks the JVM heap into RAM, preventing the Linux kernel from swapping memory to disk.
+- **Circuit Breakers (`70% total`, `60% request`)**: Protects Elasticsearch from Out-Of-Memory crashes if huge aggregations or search requests are executed.
+- **ZSTD Best Compression**: Automatically enabled by the index template, saving ~60–70% disk space compared to default LZ4 compression.
 
-**Check logs:**
+---
+
+## 13. Production Quirks, Gotchas & Debugging Runbook
+
+This section covers the real-world operational quirks that happen in production and how to solve them immediately:
+
+### Quirk 1: "I see logs when running `docker logs`, but nothing appears in Kibana"
+1. **The Time Picker Pitfall**:
+   - `docker logs <container>` dumps the *entire historical output* of a container from days or weeks ago.
+   - Elastic Agent extracts the log's original creation timestamp and stores it as `@timestamp`.
+   - In Kibana Discover, the top-right time picker defaults to **"Last 15 minutes"**. If your container only emitted logs hours or days ago, Kibana will show **0 results**.
+   - **Fix**: Change the time picker to **"Today"**, **"Last 7 days"**, or **"Last 30 days"**.
+2. **The Silent / Idle Container**:
+   - If a container is idle and not writing to `stdout` right now, Elastic Agent has nothing to ship.
+   - **Test live shipping**: Trigger an action or run:
+     ```bash
+     docker exec <container_name> sh -c "echo 'TEST LOG AT \$(date)'"
+     ```
+     With Kibana set to "Last 15 minutes", you should see this live log pop up within 5 seconds.
+3. **Application Logging to File Instead of Stdout**:
+   - Docker container log collectors only read `/var/lib/docker/containers/*/*-json.log` (`stdout`/`stderr`).
+   - If your application writes to `/var/log/app.log` inside the container without printing to console, Docker cannot capture it.
+   - **Fix**: Configure your app logger to output to console/stdout, or symlink the file to `/dev/stdout`.
+
+### Quirk 2: "Log agent noise (e.g. Promtail / internal errors) shows up as container logs"
+- Elastic Agent's Docker integration captures stdout/stderr from **every** container on the host, including log collectors like Promtail.
+- **Filter in Kibana Discover**:
+  ```kql
+  container.name : "my-app" and not container.name : ("promtail" or "elastic-agent")
+  ```
+
+### Quirk 3: S3 Snapshot Restore Fails with "open index with same name already exists"
+- **The Error**:
+  ```text
+  cannot restore index [.ds-logs-docker...] because an open index with same name already exists in the cluster
+  ```
+- **Why**: Elastic Agent writes to **Data Streams**. Data stream backing indices look like `.ds-logs-docker.container_logs-default-2026.09.04-000001`. You cannot restore over an active open index without deleting live data.
+- **The Solution**: In Kibana Snapshot Restore (or via API), **rename during restore**:
+  - Toggle ON **Rename data streams and indices**.
+  - **Capture pattern**: `(.+)` *(do NOT use `data_(.+)`, which is just Kibana's grey example placeholder!)*
+  - **Replacement pattern**: `restored_$1`
+  - Turn **OFF** *Restore global state* and *Restore feature state*.
+- **To View**: In Kibana → **Data Views**, create a view for `restored_*`, open Discover, and browse the snapshot logs!
+- **To Clean Up Later**: In Dev Tools, run `DELETE /restored_*` to free disk space when done.
+
+### Quirk 4: Remote Agents Go Offline (Fleet Output URL Trap)
+- When Fleet Server starts, Kibana often initializes the default Elasticsearch output to `https://elasticsearch:9200`.
+- That hostname only resolves inside the Docker network. Remote client machines cannot resolve `elasticsearch:9200` and will fail to connect.
+- **Fix**: In Kibana → **Management → Fleet → Settings → Outputs → default**, change the URL to `https://elk.yourdomain.com:9200` (or your public IP).
+
+### Quirk 5: Single-Node Storage Myth (Why Hot/Warm/Cold is a waste locally)
+- In a multi-node cluster, Hot is on NVMe and Warm/Cold is on cheap HDDs.
+- On a **single node**, Hot, Warm, and Cold all live on the **same physical EBS disk**.
+- Running warm/cold phases locally only burns CPU/RAM for force-merges without saving storage costs.
+- **The Lean Solution**: Retain 7 days locally (`ILM_DELETE_AFTER=7d`), and let S3 hold the 30-day backups via automated SLM (`04-setup-s3-backup.sh`).
+
+---
+
+## 14. Troubleshooting & Handy API Commands
+
+### Container Troubleshooting
 ```bash
-sudo docker compose logs elasticsearch | tail -50
+# View Elasticsearch startup logs
+docker compose logs elasticsearch | tail -50
+
+# View Kibana logs
+docker compose logs kibana | tail -50
+
+# Test Fleet Server status
+curl -sk https://localhost:8220/api/status
 ```
 
-**Common causes:**
-- `vm.max_map_count` too low (Linux) → `sudo sysctl -w vm.max_map_count=262144`
-- Heap too large for available RAM → reduce `ES_JVM_HEAP`
-- Port conflict → check `sudo docker ps -a` for stale containers
-
----
-
-### Kibana shows "Kibana server is not ready yet"
-
-Kibana takes 60–120 seconds after Elasticsearch becomes healthy. If it doesn't recover:
+### Unblocking Read-Only Flood Stage (If Disk Hit 95%)
+When disk hits 95%, Elasticsearch locks all indices to read-only mode (`read_only_allow_delete: true`). Once disk space is freed, unlock it with:
 ```bash
-sudo docker compose logs kibana | tail -50
-```
-- Wrong `KIBANA_SYSTEM_PASSWORD` → re-run `sudo ./02-start-elk.sh` (it resets the password automatically)
-- Encryption key too short → `KIBANA_ENCRYPTION_KEY` must be ≥ 32 chars
-
----
-
-### Nginx fails to start (port already allocated)
-
-```bash
-sudo docker ps -a             # find stale containers
-sudo docker rm -f <id>        # remove them
-sudo ./02-start-elk.sh --clean       # full clean start
-sudo ./02-start-elk.sh
-```
-
----
-
-### Fleet Server stuck in STARTING
-
-Fleet Server waits for a valid policy from Kibana. This happens when the `fleet-server-policy` doesn't exist yet.
-
-**Fix:**
-1. Open Kibana → **Management → Fleet → Add Fleet Server**
-2. Create policy with ID `fleet-server-policy`
-3. Re-run `./03-start-fleet.sh` with the new token
-
----
-
-### Remote agent can't connect to Fleet Server
-
-```bash
-# Test from the remote server:
-curl -sk https://elk.mycompany.com:8220/api/status
-# Should return: {"status":"HEALTHY",...}
-```
-
-Check:
-1. Port `8220` is open in your firewall/security group
-2. `ELK_SERVER_DOMAIN` in `.env` matches your actual domain
-3. Fleet Server is running: `sudo docker ps | grep fleet`
-
----
-
-### Index is read-only (disk full)
-
-When disk hits `ES_WATERMARK_FLOOD_STAGE` (default 95%), Elasticsearch marks all indices read-only.
-
-```bash
-# 1. Free up disk space
-
-# 2. Re-enable writes (run from inside the elasticsearch container)
-sudo docker exec elasticsearch \
-  curl -sk --cacert config/certs/ca/ca.crt \
+docker exec -it elasticsearch curl -sk \
+  --cacert config/certs/ca/ca.crt \
   -u "elastic:${ELASTIC_PASSWORD}" \
   -X PUT "https://localhost:9200/_all/_settings" \
   -H "Content-Type: application/json" \
   -d '{"index.blocks.read_only_allow_delete": null}'
 ```
 
----
-
-### Reset the elastic password
-
+### Useful Elasticsearch API Commands
+Run from the ELK host:
 ```bash
-# Reset interactively from inside the container
-sudo docker exec -it elasticsearch \
-  bin/elasticsearch-reset-password -u elastic -i
+# Check cluster health
+docker exec elasticsearch curl -sk --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" https://localhost:9200/_cluster/health?pretty
+
+# List index sizes
+docker exec elasticsearch curl -sk --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" "https://localhost:9200/_cat/indices?v&s=store.size:desc"
+
+# Check active recovery / restore progress
+docker exec elasticsearch curl -sk --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" "https://localhost:9200/_cat/recovery?v&active_only=true"
+
+# Inspect current ILM policy
+docker exec elasticsearch curl -sk --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" "https://localhost:9200/_ilm/policy/elk-logs-policy?pretty"
 ```
 
 ---
 
-### Useful API one-liners
+## 15. Under the Hood: Script Reference
 
-```bash
-# Set these shortcuts in your shell session
-export ES="https://localhost:9200"
-export CA="--cacert config/certs/ca/ca.crt"
-export AUTH="-u elastic:$(grep ^ELASTIC_PASSWORD .env | cut -d= -f2)"
-
-# Cluster health
-sudo docker exec elasticsearch curl -sk $CA $AUTH $ES/_cluster/health?pretty
-
-# Node JVM stats
-sudo docker exec elasticsearch curl -sk $CA $AUTH $ES/_nodes/stats/jvm?pretty
-
-# Index sizes
-sudo docker exec elasticsearch curl -sk $CA $AUTH "$ES/_cat/indices?v&s=store.size:desc"
-
-# Shard allocation
-sudo docker exec elasticsearch curl -sk $CA $AUTH "$ES/_cat/shards?v"
-
-# Disk usage per node
-sudo docker exec elasticsearch curl -sk $CA $AUTH "$ES/_cat/allocation?v"
-
-# Current ILM policy
-sudo docker exec elasticsearch curl -sk $CA $AUTH "$ES/_ilm/policy/elk-logs-policy?pretty"
-```
-
----
-
-## 12. AWS S3 Backups & Restores
-
-To ensure you never lose your data, you can automatically stream your Elasticsearch snapshots to an AWS S3 bucket.
-
-### Setting up Automated Daily Backups
-1. Create an AWS S3 Bucket (e.g., `my-elk-backups`) and generate an IAM Access Key with read/write permissions for that bucket.
-2. Add your AWS credentials and bucket details to the bottom of your `.env` file on your ELK server:
-   ```ini
-   AWS_ACCESS_KEY_ID=your_access_key
-   AWS_SECRET_ACCESS_KEY=your_secret_key
-   S3_SNAPSHOT_BUCKET=your_bucket_name
-   S3_SNAPSHOT_REGION=us-east-1
-   ```
-3. Run the automated S3 setup script:
-   ```bash
-   sudo bash ./04-setup-s3-backup.sh
-   ```
-This script securely injects your AWS credentials into the encrypted Elasticsearch keystore, registers the S3 repository, and configures a **Snapshot Lifecycle Management (SLM)** policy to automatically back up your cluster every day at midnight and retain the backups for 30 days.
-
-### How to Restore Data from a Backup
-If you ever need to restore an index (or check what is inside a backup), you can do it entirely through the Kibana UI—no terminal commands required!
-
-1. Open **Kibana** in your browser.
-2. Navigate to **Management → Stack Management → Snapshot and Restore**.
-3. Click the **Snapshots** tab. You will see a list of all your daily backups stored in S3.
-4. Click on any snapshot to view the indices contained within it.
-5. To restore data, click the **Restore** icon next to the snapshot. A wizard will guide you to:
-   - Select exactly which indices you want to restore (you can restore specific logs or the entire cluster).
-   - Optionally rename the restored indices (e.g., restoring `logs-system` as `restored-logs-system`) so you can investigate the data without overwriting your live logs.
-   - Click **Restore snapshot** and Kibana will stream the data directly back from S3 into your cluster!
-
----
-
-## 13. Under the Hood: How the Scripts Work
-
-To make this deployment reliable across different environments, much of the complexity is abstracted into three Bash scripts. If you need to debug or customize the stack, here is exactly what each script does.
-
-### A. `02-start-elk.sh` (Main Stack Initializer)
-This script handles the lifecycle of the core ELK stack (Elasticsearch, Kibana, Nginx, Certbot).
-1. **Pre-flight Checks**: Validates that Docker and `curl` are installed, and that `.env` is populated with all required variables and valid memory syntax.
-2. **System Requirements**: On Linux, it temporarily and persistently sets `vm.max_map_count=262144`, which is a strict kernel requirement for the Elasticsearch JVM.
-3. **Nginx & SSL Configuration**:
-   - If `ELK_SERVER_DOMAIN` is set, it temporarily spawns a standalone Certbot container on port 80 to provision a Let's Encrypt certificate. It then activates the `kibana.conf.template`.
-   - If no domain is set (IP-only mode), it skips Let's Encrypt and activates `kibana-ip.conf.template`, which falls back to the self-signed certificates generated by the `elk-setup` container.
-4. **Starts the Stack & Generates Certificates**: Runs `docker compose up -d`. This triggers the `elk-setup` container, which is responsible for the foundational security setup:
-   - **CA Creation**: Uses `elasticsearch-certutil` to generate a root Certificate Authority (CA) if one doesn't exist.
-   - **Node Certificates**: Generates self-signed certificates for Elasticsearch, Kibana, and Fleet Server using the CA, securely storing them in the `elk_certs` volume.
-   - **Password Setup**: Once Elasticsearch boots, it securely sets the `elastic` and `kibana_system` passwords using the Elasticsearch API based on your `.env` values.
-5. **Health Waiters**: Actively polls `curl` inside the Elasticsearch and Kibana containers (bypassing the host network) until their APIs report a healthy status.
-6. **API Bootstrapping**:
-   - Applies cluster-level settings (like max shards per node and disk watermark thresholds) via the Elasticsearch `_cluster/settings` API.
-   - Applies the **Index Lifecycle Management (ILM)** policy via the `_ilm/policy` API to automatically rotate logs when they get too old or too large.
-   - Applies the default index template via the `_index_template` API to enable `best_compression` (zstd) and limit dynamic mapping explosions.
-
-### B. `03-start-fleet.sh` (Fleet Server Initializer)
-Fleet Server is intentionally decoupled from `docker-compose.yml`. This is because Fleet Server requires a Kibana-generated enrollment token to start, meaning Kibana must be fully running and manually configured before Fleet Server can boot.
-1. **Token Injection**: Interactively prompts for the Service Token generated in the Kibana UI.
-2. **Environment Discovery**: Uses `docker volume ls` and `docker network ls` to dynamically locate the `elk_certs` volume and `elk_default` network created by `docker-compose.yml`.
-3. **Container Launch**: Spawns the `fleet-server` container using a direct `docker run` command, attaching it to the discovered network and volumes.
-4. **Trust Configuration**: Injects the self-signed CA cert (`ca.crt`) into the container so Fleet Server can securely authenticate against the Elasticsearch API.
-
-### C. `install-agent.sh` (Remote Agent Installer)
-This script is designed to be copied to any remote server (Ubuntu, RHEL, or macOS) to securely install and enroll an Elastic Agent.
-1. **System Detection**: Reads `/etc/os-release` and `uname -m` to determine the operating system (`deb`, `rpm`, `tar`, `darwin`) and CPU architecture (`x86_64`, `arm64`).
-2. **Dynamic Download**: Constructs the correct URL to Elastic's artifact repository and downloads the exact package for the detected architecture.
-3. **Package Installation**: Installs the agent using the native package manager (`dpkg`, `rpm`, or `tar`).
-4. **Service Management**: Uses `systemctl` (on Linux) to enable and start the agent daemon. (The agent must be running in the background before enrollment can succeed).
-5. **Enrollment**: 
-   - Uses `elastic-agent enroll --force` (for package managers) or `elastic-agent install` (for tarballs) to register the agent with your Fleet Server.
-   - If you pass the `--insecure` flag (required for IP-only setups), it tells the agent to bypass strict TLS validation for the self-signed certificate served by Nginx.
+| Script | How it Works |
+|---|---|
+| **`01-prepare-server.sh`** | Verifies root privileges, detects distro (`apt` vs `yum`), installs Docker & Compose v2, tunes kernel memory maps (`vm.max_map_count=262144`), increases file descriptors (`limits.conf`), and generates `.env` with random 32-character keys. |
+| **`02-start-elk.sh`** | Loads `.env`, provisions Let's Encrypt certificates (if domain provided), starts containers via `docker compose up -d`, waits for healthchecks on ports `9200` and `5601`, configures Fleet output fingerprints, and invokes `update-policies.sh`. |
+| **`03-start-fleet.sh`** | Prompts for the Kibana enrollment token, detects the Docker network and `certs` volume, and launches the `fleet-server` container connected to Elasticsearch with root CA certificates mounted. |
+| **`04-setup-s3-backup.sh`** | Injects AWS keys into the secure Elasticsearch keystore (`elasticsearch-keystore add s3.client.default...`), reloads secure settings, registers the S3 snapshot repository, and creates the daily SLM policy. |
+| **`update-policies.sh`** | Lightweight updater that connects directly to Elasticsearch via `curl` inside the container to apply cluster watermarks, the `elk-logs-policy` (7-day retention), and `elk-default-logs` index template (dynamic mapping & 5s refresh). Runs in ~1 second with zero container restarts. |
+| **`install-agent.sh`** | Standalone installer for remote Linux/macOS client servers. Detects OS and CPU architecture, downloads the official Elastic Agent package, installs via `dpkg`/`rpm`/`tar`, enables the `elastic-agent` systemd service, and enrolls with Fleet Server. |

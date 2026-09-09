@@ -10,8 +10,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.env"
-COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${ROOT_DIR}/.env"
+COMPOSE_FILE="${ROOT_DIR}/docker-compose.yml"
 
 # ─── Colours ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -175,7 +176,9 @@ fi
 # ─── Create required directories ──────────────────────────────────────────────
 section "Creating Directories"
 
-mkdir -p "${SCRIPT_DIR}/config/certs"
+mkdir -p "${ROOT_DIR}/letsencrypt"
+mkdir -p "${ROOT_DIR}/certbot-www"
+mkdir -p "${ROOT_DIR}/nginx/templates"
 
 info "Directories ready ✓"
 
@@ -204,31 +207,28 @@ info "Images pulled ✓"
 # ─── Select Nginx SSL Mode ────────────────────────────────────────────────────
 section "Configuring Nginx"
 
-NGINX_TMPL_DIR="${SCRIPT_DIR}/nginx/templates"
+NGINX_TMPL_DIR="${ROOT_DIR}/nginx/templates"
 
 if [[ -n "${ELK_SERVER_DOMAIN}" ]] && \
    [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP_OR_HOSTNAME" ]] && \
    [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP" ]]; then
   info "Domain mode: using Let's Encrypt certs for ${ELK_SERVER_DOMAIN}"
-  # Ensure only the domain template is active
-  cp "${NGINX_TMPL_DIR}/kibana.conf.template" "${NGINX_TMPL_DIR}/default.conf.template"
-  rm -f "${NGINX_TMPL_DIR}/kibana-ip.conf.template.active"
+  cp "${NGINX_TMPL_DIR}/kibana-domain.conf.tmpl" "${NGINX_TMPL_DIR}/default.conf.template"
 else
   info "IP-only mode: using self-signed certs (ELK_SERVER_DOMAIN not set)"
-  # Ensure only the IP template is active
-  cp "${NGINX_TMPL_DIR}/kibana-ip.conf.template" "${NGINX_TMPL_DIR}/default.conf.template"
+  cp "${NGINX_TMPL_DIR}/kibana-ip.conf.tmpl" "${NGINX_TMPL_DIR}/default.conf.template"
 fi
 
 if [[ -n "${ELK_SERVER_DOMAIN}" ]] && [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP_OR_HOSTNAME" ]] && [[ "${ELK_SERVER_DOMAIN}" != "YOUR_ELK_SERVER_IP" ]]; then
-  if [[ ! -d "./letsencrypt/live/${ELK_SERVER_DOMAIN}" ]]; then
+  if [[ ! -d "${ROOT_DIR}/letsencrypt/live/${ELK_SERVER_DOMAIN}" ]]; then
     section "Provisioning initial Let's Encrypt Certificate for ${ELK_SERVER_DOMAIN}"
     info "Temporarily binding to Port 80 to request certificate..."
     # Ensure Port 80 is not currently in use by an old nginx container
     docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" stop nginx 2>/dev/null || true
     
     docker run -it --rm --name certbot-init \
-      -v "$(pwd)/letsencrypt:/etc/letsencrypt" \
-      -v "$(pwd)/certbot-www:/var/www/certbot" \
+      -v "${ROOT_DIR}/letsencrypt:/etc/letsencrypt" \
+      -v "${ROOT_DIR}/certbot-www:/var/www/certbot" \
       -p 80:80 \
       certbot/certbot certonly --standalone \
       -d "${ELK_SERVER_DOMAIN}" \
@@ -340,7 +340,7 @@ echo "  │  Service          │  URL                                 │"
 echo "  ├──────────────────────────────────────────────────────────────"
 printf "  │  Kibana           │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}"
 printf "  │  Elasticsearch    │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${ES_PORT}"
-printf "  │  Fleet Server     │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${FLEET_SERVER_PORT} (run 03-start-fleet.sh)"
+printf "  │  Fleet Server     │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${FLEET_SERVER_PORT} (run ./scripts/03-start-fleet.sh)"
 printf "  │  APM Server       │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${APM_SERVER_PORT}"
 echo  "  ├──────────────────────────────────────────────────────────────"
 printf "  │  Cluster status:  ${CLUSTER_HEALTH:?}  %-36s  │\n" ""
