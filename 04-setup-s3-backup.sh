@@ -23,7 +23,7 @@ error()   { echo -e "  ${RED}✗${RESET} $1"; }
 
 # --- Load Environment Variables -----------------------------------------------
 if [ ! -f .env ]; then
-  error ".env file not found! Please run setup.sh first."
+  error ".env file not found! Please run 02-start-elk.sh first."
   exit 1
 fi
 

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  ELK Stack Setup Script — v9.x with Fleet Server + Elastic Agent
+#  02-start-elk.sh — ELK Stack Startup & Controller (v9.x)
 #  Usage:
-#    chmod +x setup.sh
-#    ./setup.sh [--help] [--down] [--clean]
+#    chmod +x 02-start-elk.sh
+#    ./02-start-elk.sh [--help] [--down] [--clean] [--policies-only]
 #
 #  Environment variables are read from the .env file in the same directory.
-#  Copy .env.example to .env and edit before running.
 # =============================================================================
 set -euo pipefail
 
@@ -47,7 +46,8 @@ escurl() {
 usage() {
   echo "Usage: $0 [--down] [--clean] [--help]"
   echo ""
-  echo "  (no args)   Start / bring up the ELK stack"
+  echo "  (no args)          Start / bring up the ELK stack & apply policies"
+  echo "  --policies-only    Apply ILM and index templates only (runs update-policies.sh)"
   echo "  --down      Stop all containers (keep volumes)"
   echo "  --clean     Stop all containers AND remove all volumes (data loss!)"
   echo "  --help      Show this help message"
@@ -59,6 +59,9 @@ ACTION="up"
 for arg in "$@"; do
   case "$arg" in
     --help)  usage ;;
+    --policies-only)
+      exec "${SCRIPT_DIR}/update-policies.sh"
+      ;;
     --down)  ACTION="down" ;;
     --clean) ACTION="clean" ;;
     *) error "Unknown argument: $arg"; usage ;;
@@ -287,119 +290,8 @@ echo ""
 info "Kibana is available ✓"
 
 
-# ─── Apply Elasticsearch cluster-level settings ────────────────────────────────
-section "Applying Elasticsearch Cluster Settings"
-
-SETTINGS=$(cat <<EOF
-{
-  "persistent": {
-    "cluster.max_shards_per_node":                              ${ES_MAX_SHARDS_PER_NODE},
-    "indices.recovery.max_bytes_per_sec":                       "${ES_RECOVERY_MAX_BYTES_PER_SEC}",
-    "cluster.routing.allocation.disk.watermark.low":            "${ES_WATERMARK_LOW}",
-    "cluster.routing.allocation.disk.watermark.high":           "${ES_WATERMARK_HIGH}",
-    "cluster.routing.allocation.disk.watermark.flood_stage":    "${ES_WATERMARK_FLOOD_STAGE}"
-  }
-}
-EOF
-)
-
-SETTINGS_RESP=$(escurl \
-  -X PUT \
-  -H "Content-Type: application/json" \
-  "https://localhost:${ES_PORT}/_cluster/settings" \
-  -d "${SETTINGS}" || echo "{}")
-
-if echo "${SETTINGS_RESP}" | grep -q '"acknowledged":true'; then
-  info "Cluster settings applied ✓"
-else
-  warn "Cluster settings may not have been applied. Response: ${SETTINGS_RESP}"
-fi
-
-# ─── Index Lifecycle Management (ILM) policy ───────────────────────────────────────
-section "Applying ILM Policy (Log Volume Control)"
-
-# Retention days & rollover thresholds are read from .env
-ILM_POLICY=$(
-cat <<EOF
-{
-  "policy": {
-    "phases": {
-      "hot": {
-        "min_age": "0ms",
-        "actions": {
-          "rollover": {
-            "max_age":            "${ILM_ROLLOVER_MAX_AGE}",
-            "max_primary_shard_size": "${ILM_ROLLOVER_MAX_SHARD_SIZE}"
-          },
-          "set_priority": { "priority": 100 }
-        }
-      },
-      "delete": {
-        "min_age": "${ILM_DELETE_AFTER}",
-        "actions": {
-          "delete": { "delete_searchable_snapshot": true }
-        }
-      }
-    }
-  }
-}
-EOF
-)
-
-ILM_RESP=$(escurl   -X PUT   -H "Content-Type: application/json"   "https://localhost:${ES_PORT}/_ilm/policy/${ILM_POLICY_NAME}"   -d "${ILM_POLICY}" || echo "{}")
-
-if echo "${ILM_RESP}" | grep -q '"acknowledged":true'; then
-  info "ILM policy '${ILM_POLICY_NAME}' applied ✓"
-  info "  Rollover:  every ${ILM_ROLLOVER_MAX_AGE} or ${ILM_ROLLOVER_MAX_SHARD_SIZE}/shard"
-  info "  Delete:    after ${ILM_DELETE_AFTER} (local purge — S3 retains historical snapshots)"
-else
-  warn "ILM policy may not have applied. Response: ${ILM_RESP}"
-fi
-
-# ─── Default index template — compression + ILM + mapping limits ───────────────
-section "Applying Default Index Template (Compression + Limits)"
-
-INDEX_TEMPLATE=$(
-cat <<EOF
-{
-  "index_patterns": ["logs-*", "metrics-*", "*-logs-*"],
-  "priority": 1,
-  "template": {
-    "settings": {
-      "codec":                          "best_compression",
-      "number_of_shards":               "${ES_DEFAULT_SHARDS}",
-      "number_of_replicas":             "${ES_DEFAULT_REPLICAS}",
-      "refresh_interval":               "${ES_REFRESH_INTERVAL}",
-      "index.lifecycle.name":           "${ILM_POLICY_NAME}",
-      "index.lifecycle.rollover_alias": "logs",
-      "mapping.total_fields.limit":     ${ES_MAPPING_TOTAL_FIELDS_LIMIT}
-    },
-    "mappings": {
-      "_source": {
-        "enabled": true
-      },
-      "dynamic":                        "${ES_DYNAMIC_MAPPING}"
-    }
-  }
-}
-EOF
-)
-
-TEMPL_RESP=$(escurl \
-  -X PUT \
-  -H "Content-Type: application/json" \
-  "https://localhost:${ES_PORT}/_index_template/elk-default-logs" \
-  -d "${INDEX_TEMPLATE}" || echo "{}")
-
-if echo "${TEMPL_RESP}" | grep -q '"acknowledged":true'; then
-  info "Index template 'elk-default-logs' applied ✓"
-  info "  Compression:     best_compression (zstd — ~60-70% smaller than default)"
-  info "  Shards/Replicas: ${ES_DEFAULT_SHARDS} / ${ES_DEFAULT_REPLICAS}"
-  info "  Refresh:         ${ES_REFRESH_INTERVAL} (batches writes, reduces overhead)"
-  info "  Dynamic mapping: ${ES_DYNAMIC_MAPPING} (prevents field explosion)"
-else
-  warn "Index template may not have applied. Response: ${TEMPL_RESP}"
-fi
+# ─── Apply cluster settings, ILM policies & index templates ───────────────────
+"${SCRIPT_DIR}/update-policies.sh"
 
 # ─── Fix Fleet Output Fingerprint for Let's Encrypt ────────────────────────────
 if [[ -n "${ELK_SERVER_DOMAIN}" ]]; then
@@ -448,7 +340,7 @@ echo "  │  Service          │  URL                                 │"
 echo "  ├──────────────────────────────────────────────────────────────"
 printf "  │  Kibana           │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}"
 printf "  │  Elasticsearch    │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${ES_PORT}"
-printf "  │  Fleet Server     │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${FLEET_SERVER_PORT} (run start-fleet.sh)"
+printf "  │  Fleet Server     │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${FLEET_SERVER_PORT} (run 03-start-fleet.sh)"
 printf "  │  APM Server       │  %-36s  │\n" "https://${ELK_SERVER_DOMAIN:-localhost}:${APM_SERVER_PORT}"
 echo  "  ├──────────────────────────────────────────────────────────────"
 printf "  │  Cluster status:  ${CLUSTER_HEALTH:?}  %-36s  │\n" ""
@@ -458,6 +350,6 @@ echo -e "${RESET}"
 info "Username: elastic"
 info "Password: (see ELASTIC_PASSWORD in .env)"
 echo ""
-warn "TIP: To stop the stack:           ./setup.sh --down"
-warn "TIP: To destroy all data:         ./setup.sh --clean"
+warn "TIP: To stop the stack:           zsh --down"
+warn "TIP: To destroy all data:         zsh --clean"
 warn "TIP: To view logs:                docker compose logs -f <service>"

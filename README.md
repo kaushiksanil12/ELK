@@ -57,7 +57,7 @@
 - **Elastic Agent is NOT on the ELK server** — It runs on the servers you want to monitor (app, web, DB servers).
 - **Fleet Server** is the control plane — manages agent policies, integrations, and configuration from a central UI in Kibana.
 - **Nginx** terminates public SSL with a Let's Encrypt certificate and proxies to internal containers. Containers themselves use self-signed TLS internally.
-- **Fleet Server is started separately** via `start-fleet.sh` after the main stack is running and a Fleet enrollment token has been generated in Kibana.
+- **Fleet Server is started separately** via `03-start-fleet.sh` after the main stack is running and a Fleet enrollment token has been generated in Kibana.
 
 ---
 
@@ -101,7 +101,7 @@ curl --version
 > sudo sysctl -w vm.max_map_count=262144
 > echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-elk.conf
 > ```
-> `setup.sh` does this automatically.
+> `02-start-elk.sh` does this automatically.
 
 ### Remote Servers (for Elastic Agent)
 
@@ -119,16 +119,17 @@ curl --version
 ```
 elk/
 ├── .env                         ← All configuration (DO NOT COMMIT)
-├── .env.example                 ← Template — copy to .env and edit
-├── .gitignore                   ← Excludes .env, certs, and letsencrypt
+├── .env.example                 ← Template with production defaults
 ├── docker-compose.yml           ← Elasticsearch, Kibana, Nginx, Certbot
-├── setup.sh                     ← Main start/stop/clean script
-├── start-fleet.sh               ← Start Fleet Server (run after setup.sh)
-├── install-agent.sh             ← Run on REMOTE servers to install Elastic Agent
-├── README.md                    ← This file
-└── nginx/
-    └── templates/
-        └── kibana.conf.template ← Nginx SSL reverse proxy config
+│
+├── 01-prepare-server.sh         ← Step 1: Run ONCE on fresh Linux server (Docker, sysctl, generates .env)
+├── 02-start-elk.sh              ← Step 2: Starts/stops core ELK stack & Nginx SSL proxy 
+├── 03-start-fleet.sh            ← Step 3: Starts Fleet Server container 
+├── 04-setup-s3-backup.sh        ← Step 4: Registers AWS S3 repository & 30d daily SLM 
+│
+├── update-policies.sh           ← Maintenance: Fast live update of ILM & templates in ~1s (no restarts!)
+├── install-agent.sh             ← Remote: Run on client servers to ship logs/metrics to Fleet
+└── nginx/templates/             ← Nginx reverse proxy configurations
 ```
 
 > ⚠️ **`.env`, `config/certs/`, and `letsencrypt/`** are in `.gitignore` — never commit secrets or private keys.
@@ -196,7 +197,7 @@ These values are injected into every TLS certificate at first run, allowing remo
 | Only have an IP | `ELK_SERVER_PUBLIC_IP=10.0.0.5` | `https://10.0.0.5:8220` |
 | Have a domain (recommended) | Set both | `https://elk.mycompany.com:8220` |
 
-> ⚠️ **SANs are baked into the certificate at first run.** If you change these values later, you must run `./setup.sh --clean` to regenerate certificates (this deletes all data).
+> ⚠️ **SANs are baked into the certificate at first run.** If you change these values later, you must run `./02-start-elk.sh --clean` to regenerate certificates (this deletes all data).
 
 ### 4.6 JVM Heap Size
 
@@ -261,12 +262,68 @@ ES_JVM_HEAP=3g                          # ~50% of your RAM
 ES_MEM_LIMIT=6g                         # ~2x the heap
 ```
 
-### Step 2 — Run setup.sh
+### Step 2 — Run 02-start-elk.sh
 
 ```bash
-sudo chmod +x setup.sh start-fleet.sh install-agent.sh
-sudo ./setup.sh
+./02-start-elk.sh
 ```
+*(or [0;36m[1m
+  ███████╗██╗     ██╗  ██╗
+  ██╔════╝██║     ██║ ██╔╝
+  █████╗  ██║     █████╔╝ 
+  ██╔══╝  ██║     ██╔═██╗ 
+  ███████╗███████╗██║  ██╗
+  ╚══════╝╚══════╝╚═╝  ╚═╝  Stack Setup — v9.x
+[0m
+
+[0;34m[1m──── Pre-flight Checks ────[0m
+
+[0;32m[INFO][0m  Docker:         Docker version 27.3.1, build ce12230
+[0;32m[INFO][0m  Docker Compose: Docker Compose version v2.30.3-desktop.1
+[0;32m[INFO][0m  .env loaded: STACK_VERSION=9.5.0, CLUSTER=elk-cluster
+
+[0;34m[1m──── Validating Configuration ────[0m
+
+[1;33m[WARN][0m  You are using DEFAULT PASSWORDS. Change them in .env before production use!
+[0;32m[INFO][0m  All required variables validated ✓
+
+[0;34m[1m──── Validating Resource Limits ────[0m
+
+[0;32m[INFO][0m    ES_MEM_LIMIT = 2g ✓
+[0;32m[INFO][0m    KIBANA_MEM_LIMIT = 1g ✓
+[0;32m[INFO][0m    FLEET_MEM_LIMIT = 512m ✓
+[0;32m[INFO][0m    ES_JVM_HEAP = 1g ✓
+[0;32m[INFO][0m  Resource limits validated ✓
+
+[0;34m[1m──── System Requirements ────[0m
+
+[0;32m[INFO][0m  macOS detected — Docker Desktop handles vm.max_map_count automatically ✓
+
+[0;34m[1m──── Creating Directories ────[0m
+
+[0;32m[INFO][0m  Directories ready ✓
+
+[0;34m[1m──── Pulling Docker Images (9.5.0) ────[0m
+
+[0;32m[INFO][0m  Images pulled ✓
+
+[0;34m[1m──── Configuring Nginx ────[0m
+
+[0;32m[INFO][0m  IP-only mode: using self-signed certs (ELK_SERVER_DOMAIN not set)
+
+[0;34m[1m──── Starting ELK Stack ────[0m
+
+[0;32m[INFO][0m  Containers started ✓
+
+[0;34m[1m──── Waiting for Elasticsearch ────[0m
+
+
+[0;32m[INFO][0m  Elasticsearch is healthy ✓
+
+[0;34m[1m──── Waiting for Kibana ────[0m
+
+
+[0;32m[INFO][0m  Kibana is available ✓)*
 
 The script will automatically:
 1. ✅ Validate all required environment variables
@@ -313,10 +370,10 @@ Fleet Server is started **separately** after the main stack is running, because 
 4. Click **"Generate Fleet Server policy"**
 5. Copy the **enrollment token** shown on screen
 
-### Step 2 — Run start-fleet.sh
+### Step 2 — Run 03-start-fleet.sh
 
 ```bash
-sudo bash ./start-fleet.sh
+./03-start-fleet.sh
 ```
 
 The script will:
@@ -410,22 +467,22 @@ The new agent should appear as **Healthy** within 30–60 seconds.
 
 ### Start the stack
 ```bash
-sudo ./setup.sh
+sudo ./02-start-elk.sh
 ```
 
-### Start Fleet Server (after setup.sh)
+### Start Fleet Server (after 02-start-elk.sh)
 ```bash
-sudo bash ./start-fleet.sh
+./03-start-fleet.sh
 ```
 
 ### Stop the stack (data preserved)
 ```bash
-sudo ./setup.sh --down
+sudo ./02-start-elk.sh --down
 ```
 
 ### Destroy everything — containers AND all data
 ```bash
-sudo ./setup.sh --clean
+sudo ./02-start-elk.sh --clean
 # ⚠️  Deletes all Elasticsearch data, Kibana saved objects, and TLS certificates.
 ```
 
@@ -477,7 +534,7 @@ Remote agents connect to Nginx's Let's Encrypt certificate — no custom CA need
 
 ### 9.2 Subject Alternative Names (SANs)
 
-At certificate generation time, `setup.sh` injects your server's **public IP** and **domain name** into every internal certificate as a SAN. This enables full TLS verification without `--insecure`.
+At certificate generation time, `02-start-elk.sh` injects your server's **public IP** and **domain name** into every internal certificate as a SAN. This enables full TLS verification without `--insecure`.
 
 ```bash
 # In .env
@@ -487,9 +544,9 @@ ELK_SERVER_DOMAIN=elk.mycompany.com
 
 > ⚠️ **SANs are baked into certs at first run.** To change them:
 > ```bash
-> sudo ./setup.sh --clean   # destroys all data
+> sudo ./02-start-elk.sh --clean   # destroys all data
 > # Edit .env with new IP/domain
-> sudo ./setup.sh           # regenerates certs with new SANs
+> sudo ./02-start-elk.sh           # regenerates certs with new SANs
 > ```
 
 ### 9.3 Security Checklist
@@ -546,7 +603,7 @@ Kibana takes 60–120 seconds after Elasticsearch becomes healthy. If it doesn't
 ```bash
 sudo docker compose logs kibana | tail -50
 ```
-- Wrong `KIBANA_SYSTEM_PASSWORD` → re-run `sudo ./setup.sh` (it resets the password automatically)
+- Wrong `KIBANA_SYSTEM_PASSWORD` → re-run `sudo ./02-start-elk.sh` (it resets the password automatically)
 - Encryption key too short → `KIBANA_ENCRYPTION_KEY` must be ≥ 32 chars
 
 ---
@@ -556,8 +613,8 @@ sudo docker compose logs kibana | tail -50
 ```bash
 sudo docker ps -a             # find stale containers
 sudo docker rm -f <id>        # remove them
-sudo ./setup.sh --clean       # full clean start
-sudo ./setup.sh
+sudo ./02-start-elk.sh --clean       # full clean start
+sudo ./02-start-elk.sh
 ```
 
 ---
@@ -569,7 +626,7 @@ Fleet Server waits for a valid policy from Kibana. This happens when the `fleet-
 **Fix:**
 1. Open Kibana → **Management → Fleet → Add Fleet Server**
 2. Create policy with ID `fleet-server-policy`
-3. Re-run `sudo bash ./start-fleet.sh` with the new token
+3. Re-run `./03-start-fleet.sh` with the new token
 
 ---
 
@@ -660,7 +717,7 @@ To ensure you never lose your data, you can automatically stream your Elasticsea
    ```
 3. Run the automated S3 setup script:
    ```bash
-   sudo bash ./setup-s3.sh
+   sudo bash ./04-setup-s3-backup.sh
    ```
 This script securely injects your AWS credentials into the encrypted Elasticsearch keystore, registers the S3 repository, and configures a **Snapshot Lifecycle Management (SLM)** policy to automatically back up your cluster every day at midnight and retain the backups for 30 days.
 
@@ -682,7 +739,7 @@ If you ever need to restore an index (or check what is inside a backup), you can
 
 To make this deployment reliable across different environments, much of the complexity is abstracted into three Bash scripts. If you need to debug or customize the stack, here is exactly what each script does.
 
-### A. `setup.sh` (Main Stack Initializer)
+### A. `02-start-elk.sh` (Main Stack Initializer)
 This script handles the lifecycle of the core ELK stack (Elasticsearch, Kibana, Nginx, Certbot).
 1. **Pre-flight Checks**: Validates that Docker and `curl` are installed, and that `.env` is populated with all required variables and valid memory syntax.
 2. **System Requirements**: On Linux, it temporarily and persistently sets `vm.max_map_count=262144`, which is a strict kernel requirement for the Elasticsearch JVM.
@@ -699,7 +756,7 @@ This script handles the lifecycle of the core ELK stack (Elasticsearch, Kibana, 
    - Applies the **Index Lifecycle Management (ILM)** policy via the `_ilm/policy` API to automatically rotate logs when they get too old or too large.
    - Applies the default index template via the `_index_template` API to enable `best_compression` (zstd) and limit dynamic mapping explosions.
 
-### B. `start-fleet.sh` (Fleet Server Initializer)
+### B. `03-start-fleet.sh` (Fleet Server Initializer)
 Fleet Server is intentionally decoupled from `docker-compose.yml`. This is because Fleet Server requires a Kibana-generated enrollment token to start, meaning Kibana must be fully running and manually configured before Fleet Server can boot.
 1. **Token Injection**: Interactively prompts for the Service Token generated in the Kibana UI.
 2. **Environment Discovery**: Uses `docker volume ls` and `docker network ls` to dynamically locate the `elk_certs` volume and `elk_default` network created by `docker-compose.yml`.

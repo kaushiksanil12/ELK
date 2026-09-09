@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Check .env ─────────────────────────────────────────────────────────────────
 if [ ! -f "${SCRIPT_DIR}/.env" ]; then
-  error ".env file not found. Please run setup.sh first."
+  error ".env file not found. Please run 02-start-elk.sh first."
   exit 1
 fi
 
