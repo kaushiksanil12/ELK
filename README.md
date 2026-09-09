@@ -232,12 +232,11 @@ Controls how long data is kept and when it moves between storage tiers.
 |---|---|---|
 | `ILM_ROLLOVER_MAX_AGE` | `1d` | Roll to a new index every day |
 | `ILM_ROLLOVER_MAX_SHARD_SIZE` | `10gb` | Or when a shard hits 10 GB |
-| `ILM_WARM_AFTER` | `2d` | Move to warm (shrink + forcemerge) after 2 days |
-| `ILM_COLD_AFTER` | `7d` | Move to cold (read-only) after 7 days |
-| `ILM_DELETE_AFTER` | `30d` | **Main retention knob.** Delete data after 30 days. |
+| `ILM_DELETE_AFTER` | `7d` | **Local retention.** Delete local index after 7 days (S3 stores 30d snapshots). |
 | `ES_DEFAULT_REPLICAS` | `0` | Always `0` for single-node (no peers to replicate to) |
-| `ES_REFRESH_INTERVAL` | `30s` | How often new docs become searchable. 30s reduces I/O significantly vs the default 1s. |
-| `ES_DYNAMIC_MAPPING` | `strict` | `strict` rejects docs with unknown fields, preventing field explosion. |
+| `ES_REFRESH_INTERVAL` | `5s` | How often new docs become searchable (5s for near real-time live debugging). |
+| `ES_MAPPING_TOTAL_FIELDS_LIMIT` | `2000` | Max fields per index (supports ECS + application JSON fields). |
+| `ES_DYNAMIC_MAPPING` | `true` | `true` auto-creates fields so new container/app log fields are not rejected. |
 
 ---
 

@@ -334,21 +334,6 @@ cat <<EOF
           "set_priority": { "priority": 100 }
         }
       },
-      "warm": {
-        "min_age": "${ILM_WARM_AFTER}",
-        "actions": {
-          "shrink":     { "number_of_shards": 1 },
-          "forcemerge": { "max_num_segments": 1 },
-          "set_priority": { "priority": 50 }
-        }
-      },
-      "cold": {
-        "min_age": "${ILM_COLD_AFTER}",
-        "actions": {
-          "set_priority": { "priority": 0 },
-          "readonly":     {}
-        }
-      },
       "delete": {
         "min_age": "${ILM_DELETE_AFTER}",
         "actions": {
@@ -361,18 +346,12 @@ cat <<EOF
 EOF
 )
 
-ILM_RESP=$(escurl \
-  -X PUT \
-  -H "Content-Type: application/json" \
-  "https://localhost:${ES_PORT}/_ilm/policy/${ILM_POLICY_NAME}" \
-  -d "${ILM_POLICY}" || echo "{}")
+ILM_RESP=$(escurl   -X PUT   -H "Content-Type: application/json"   "https://localhost:${ES_PORT}/_ilm/policy/${ILM_POLICY_NAME}"   -d "${ILM_POLICY}" || echo "{}")
 
 if echo "${ILM_RESP}" | grep -q '"acknowledged":true'; then
   info "ILM policy '${ILM_POLICY_NAME}' applied ✓"
   info "  Rollover:  every ${ILM_ROLLOVER_MAX_AGE} or ${ILM_ROLLOVER_MAX_SHARD_SIZE}/shard"
-  info "  Warm:      after ${ILM_WARM_AFTER} (shrink + forcemerge)"
-  info "  Cold:      after ${ILM_COLD_AFTER} (read-only)"
-  info "  Delete:    after ${ILM_DELETE_AFTER}"
+  info "  Delete:    after ${ILM_DELETE_AFTER} (local purge — S3 retains historical snapshots)"
 else
   warn "ILM policy may not have applied. Response: ${ILM_RESP}"
 fi
