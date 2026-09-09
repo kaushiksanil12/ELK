@@ -162,10 +162,13 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   CURRENT_MAP_COUNT=$(cat /proc/sys/vm/max_map_count 2>/dev/null || echo 0)
   if [[ "${CURRENT_MAP_COUNT}" -lt 262144 ]]; then
     warn "vm.max_map_count is ${CURRENT_MAP_COUNT} (need >= 262144 for Elasticsearch)"
-    info "Applying: sudo sysctl -w vm.max_map_count=262144"
-    sudo sysctl -w vm.max_map_count=262144
-    echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-elk.conf >/dev/null
-    info "vm.max_map_count updated and persisted ✓"
+    if command -v sudo >/dev/null 2>&1; then
+      info "Attempting: sudo sysctl -w vm.max_map_count=262144"
+      sudo sysctl -w vm.max_map_count=262144 2>/dev/null || true
+      echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-elk.conf >/dev/null 2>&1 || true
+    else
+      warn "Please run './scripts/01-prepare-server.sh' with sudo once to set vm.max_map_count=262144."
+    fi
   else
     info "vm.max_map_count=${CURRENT_MAP_COUNT} ✓"
   fi

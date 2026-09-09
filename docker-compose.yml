@@ -50,9 +50,9 @@ services:
           unzip -q config/certs/certs.zip -d config/certs
         fi
         echo "==> Setting certificate permissions..."
-        chown -R root:root config/certs
-        find   config/certs -type d -exec chmod 750 {} \;
-        find   config/certs -type f -exec chmod 640 {} \;
+        chown -R 1000:0 config/certs
+        find   config/certs -type d -exec chmod 755 {} \;
+        find   config/certs -type f -exec chmod 644 {} \;
         echo "==> Waiting for Elasticsearch to be ready..."
         until curl -s --cacert config/certs/ca/ca.crt \
               -u "elastic:${ELASTIC_PASSWORD}" \

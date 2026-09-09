@@ -219,7 +219,14 @@ else
   info ".env file already exists ✓"
 fi
 
-# Ensure .env has restricted permissions
+# Ensure non-root ownership so the invoking user can manage the stack without root
+if [[ -n "${SUDO_USER:-}" ]]; then
+  TARGET_GROUP=$(id -gn "${SUDO_USER}" 2>/dev/null || echo "${SUDO_USER}")
+  chown -R "${SUDO_USER}:${TARGET_GROUP}" "${ROOT_DIR}"
+  info "Transferred ownership of project directory to '${SUDO_USER}:${TARGET_GROUP}' (non-root access enabled) ✓"
+fi
+
+# Ensure .env has restricted permissions (read/write only by owner)
 chmod 600 "${ENV_FILE}" 2>/dev/null || true
 
 # ─── Summary ──────────────────────────────────────────────────────────────────

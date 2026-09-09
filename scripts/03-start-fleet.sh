@@ -66,7 +66,6 @@ docker run -d \
   --hostname fleet-server \
   --network "${NETWORK}" \
   --restart unless-stopped \
-  --user root \
   --memory "${FLEET_MEM_LIMIT:-512m}" \
   --add-host "${ELK_SERVER_DOMAIN:-localhost}:host-gateway" \
   -v "${CERTS_VOL}:/certs" \
@@ -103,7 +102,7 @@ until docker exec fleet-server \
   ATTEMPT=$((ATTEMPT + 1))
   if [[ ${ATTEMPT} -ge 24 ]]; then
     warn "Fleet Server has not reported HEALTHY within 2 minutes."
-    warn "Check logs: sudo docker logs fleet-server --tail 50"
+    warn "Check logs: docker logs fleet-server --tail 50"
     break
   fi
   echo -ne "\r  Waiting... ${ATTEMPT}/24"
@@ -118,5 +117,5 @@ if docker exec fleet-server \
   info "Fleet Server URL: https://${ELK_SERVER_DOMAIN}:${FLEET_SERVER_PORT:-8220}"
 else
   warn "Fleet Server may still be starting up."
-  warn "Monitor with: sudo docker logs -f fleet-server"
+  warn "Monitor with: docker logs -f fleet-server"
 fi
