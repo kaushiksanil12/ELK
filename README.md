@@ -587,6 +587,27 @@ docker exec elasticsearch curl -sk --cacert config/certs/ca/ca.crt -u "elastic:$
 docker exec elasticsearch curl -sk --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" "https://localhost:9200/_ilm/policy/elk-logs-policy?pretty"
 ```
 
+### 14.6 Changing or Resetting Passwords on a Running Cluster
+
+> ⚠️ **Important:** Elasticsearch stores credentials in its internal security index inside the `esdata` volume. Changing `ELASTIC_PASSWORD` or `KIBANA_SYSTEM_PASSWORD` in `.env` only sets initial credentials during first boot. On an already-running cluster, changing `.env` alone will **not** update the database.
+
+Use the built-in Elasticsearch reset tool:
+
+```bash
+# 1. Reset elastic user password interactively (enter your desired password):
+docker exec -it elasticsearch bin/elasticsearch-reset-password -u elastic -i
+
+# 2. Reset kibana_system user password interactively:
+docker exec -it elasticsearch bin/elasticsearch-reset-password -u kibana_system -i
+```
+
+After resetting:
+1. Update both values in `.env` (`ELASTIC_PASSWORD` and `KIBANA_SYSTEM_PASSWORD`) so other maintenance scripts stay in sync.
+2. Restart Kibana to pick up the new credentials:
+   ```bash
+   docker compose restart kibana
+   ```
+
 ---
 
 ## 15. Under the Hood: Script Reference
