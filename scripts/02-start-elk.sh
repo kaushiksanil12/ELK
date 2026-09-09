@@ -351,8 +351,8 @@ echo  "  └──────────────────────�
 echo -e "${RESET}"
 
 info "Username: elastic"
-info "Password: (see ELASTIC_PASSWORD in .env)"
+info "Password: ${ELASTIC_PASSWORD}"
 echo ""
-warn "TIP: To stop the stack:           zsh --down"
-warn "TIP: To destroy all data:         zsh --clean"
+warn "TIP: To stop the stack:           ./scripts/02-start-elk.sh --down"
+warn "TIP: To destroy all data:         ./scripts/02-start-elk.sh --clean"
 warn "TIP: To view logs:                docker compose logs -f <service>"
