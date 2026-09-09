@@ -421,19 +421,146 @@ This section covers the real-world operational quirks that happen in production 
 
 ## 14. Troubleshooting & Handy API Commands
 
-### Container Troubleshooting
+### 14.1 Health Check Commands (ES, Kibana, Fleet, Elastic Agent)
+
+#### 1. Quick Stack Health Summary
+Check all container runtime states and Docker healthcheck statuses at a glance:
 ```bash
-# View Elasticsearch startup logs
-docker compose logs elasticsearch | tail -50
-
-# View Kibana logs
-docker compose logs kibana | tail -50
-
-# Test Fleet Server status
-curl -sk https://localhost:8220/api/status
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 ```
 
-### Unblocking Read-Only Flood Stage (If Disk Hit 95%)
+#### 2. Elasticsearch Health
+```bash
+# Docker native health status (healthy / unhealthy / starting)
+docker inspect --format '{{.State.Health.Status}}' elasticsearch
+
+# Detailed cluster health (green / yellow / red, node count, unassigned shards)
+docker exec -it elasticsearch curl -sk \
+  --cacert config/certs/ca/ca.crt \
+  -u "elastic:${ELASTIC_PASSWORD}" \
+  "https://localhost:9200/_cluster/health?pretty"
+```
+
+#### 3. Kibana Health
+```bash
+# Docker native health status
+docker inspect --format '{{.State.Health.Status}}' kibana
+
+# Detailed Kibana service status (overall health and plugin states)
+docker exec -it kibana curl -sk \
+  -u "kibana_system:${KIBANA_SYSTEM_PASSWORD}" \
+  "http://localhost:5601/api/status" | grep -o '"overall":{"level":"[^"]*"'
+
+# Test Kibana login endpoint response
+curl -skI "https://localhost:5601/login" | head -n 5
+```
+
+#### 4. Fleet Server Health (ELK Host)
+Fleet Server runs as an Elastic Agent in Server mode inside Docker:
+```bash
+# Direct HTTP health check (returns {"status":"HEALTHY"})
+docker exec -it fleet-server curl -sk "https://localhost:8220/api/status"
+
+# Internal Elastic Agent daemon status inside the Fleet container
+docker exec -it fleet-server elastic-agent status
+
+# Test via Nginx reverse proxy (public endpoint)
+curl -sk "https://${ELK_SERVER_DOMAIN:-localhost}:8220/api/status"
+```
+
+#### 5. Elastic Agent Health (Remote Client Server)
+Run these commands on any remote client machine shipping logs to this cluster:
+```bash
+# Check systemd service status
+sudo systemctl status elastic-agent
+
+# Detailed Elastic Agent sub-process health (Filebeat, Metricbeat, Endpoint)
+sudo elastic-agent status
+
+# If Elastic Agent is running as a Docker container on the client:
+docker exec -it <agent_container_name> elastic-agent status
+
+# Stream live Elastic Agent logs for diagnostics
+sudo journalctl -u elastic-agent -f
+```
+
+---
+
+### 14.2 Checking Health Directly from the Working / Installation Directory (Most Accurate)
+
+Running status commands directly from each component's working directory accesses deep daemon status, component sub-processes (Filebeat, Metricbeat), and raw diagnostic bundles:
+
+#### 1. Elastic Agent (On Remote Host: `/opt/Elastic/Agent`)
+The official Elastic Agent installs into `/opt/Elastic/Agent`. Navigating into this directory provides the most accurate and unbuffered diagnostic status:
+```bash
+cd /opt/Elastic/Agent
+
+# 1. Component breakdown with status of every sub-daemon (Filebeat, Metricbeat, APM)
+sudo ./elastic-agent status
+
+# 2. Detailed YAML output (lists all stream endpoints, units, check-in timestamps, errors)
+sudo ./elastic-agent status --output yaml
+
+# 3. Generate a complete diagnostics bundle zip (includes logs, config, system metrics)
+sudo ./elastic-agent diagnostics
+
+# 4. View raw JSON logs directly from the active version directory:
+tail -f /opt/Elastic/Agent/data/elastic-agent-*/logs/elastic-agent-*.ndjson
+```
+
+#### 2. Fleet Server (Docker Working Directory: `/usr/share/elastic-agent`)
+Because Fleet Server runs as an Elastic Agent in server mode inside Docker, you can invoke diagnostics directly in its working directory:
+```bash
+# Execute status directly from the agent's working directory inside the container
+docker exec -it -w /usr/share/elastic-agent fleet-server ./elastic-agent status
+
+# Full YAML status tree showing Fleet Server connection to ES & active policy revision
+docker exec -it -w /usr/share/elastic-agent fleet-server ./elastic-agent status --output yaml
+
+# Generate Fleet Server diagnostics bundle inside container
+docker exec -it -w /usr/share/elastic-agent fleet-server ./elastic-agent diagnostics
+```
+
+#### 3. Elasticsearch (Docker Working Directory: `/usr/share/elasticsearch`)
+Run checks directly inside the Elasticsearch root directory:
+```bash
+# Inspect node allocation and shard allocation directly:
+docker exec -it -w /usr/share/elasticsearch elasticsearch curl -sk \
+  --cacert config/certs/ca/ca.crt \
+  -u "elastic:${ELASTIC_PASSWORD}" \
+  "https://localhost:9200/_nodes/stats/jvm,os,process?pretty"
+
+# Check disk & JVM heap usage percentages directly:
+docker exec -it -w /usr/share/elasticsearch elasticsearch curl -sk \
+  --cacert config/certs/ca/ca.crt \
+  -u "elastic:${ELASTIC_PASSWORD}" \
+  "https://localhost:9200/_cat/nodes?v&h=name,ip,heap.percent,ram.percent,cpu,disk.used_percent"
+```
+
+#### 4. Kibana (Docker Working Directory: `/usr/share/kibana`)
+```bash
+# Query the internal status API directly via Node.js from within Kibana's root:
+docker exec -it -w /usr/share/kibana kibana curl -sk \
+  -u "kibana_system:${KIBANA_SYSTEM_PASSWORD}" \
+  "http://localhost:5601/api/status" | jq '.status.overall, .metrics.process' 2>/dev/null || true
+```
+
+### 14.3 Container Log Inspection
+```bash
+# View Elasticsearch logs
+docker compose logs -f --tail 50 elasticsearch
+
+# View Kibana logs
+docker compose logs -f --tail 50 kibana
+
+# View Fleet Server logs
+docker logs -f --tail 50 fleet-server
+
+# View Nginx reverse proxy logs (requests & upstream proxies)
+docker compose logs -f --tail 50 nginx
+```
+
+### 14.4 Unblocking Read-Only Flood Stage (If Disk Hit 95%)
 When disk hits 95%, Elasticsearch locks all indices to read-only mode (`read_only_allow_delete: true`). Once disk space is freed, unlock it with:
 ```bash
 docker exec -it elasticsearch curl -sk \
@@ -444,7 +571,7 @@ docker exec -it elasticsearch curl -sk \
   -d '{"index.blocks.read_only_allow_delete": null}'
 ```
 
-### Useful Elasticsearch API Commands
+### 14.5 Useful Elasticsearch API Commands
 Run from the ELK host:
 ```bash
 # Check cluster health
