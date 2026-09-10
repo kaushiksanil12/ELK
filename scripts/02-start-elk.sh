@@ -97,6 +97,14 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   exit 1
 fi
 
+# Auto-update legacy 70% circuit breaker limit to 95% to prevent Fleet initialization failures
+if grep -q "ES_CIRCUIT_BREAKER_TOTAL_LIMIT=70%" "${ENV_FILE}" 2>/dev/null; then
+  sed -i.bak "s/ES_CIRCUIT_BREAKER_TOTAL_LIMIT=70%/ES_CIRCUIT_BREAKER_TOTAL_LIMIT=95%/" "${ENV_FILE}"
+  rm -f "${ENV_FILE}.bak"
+  export ES_CIRCUIT_BREAKER_TOTAL_LIMIT=95%
+  info "Updated ES_CIRCUIT_BREAKER_TOTAL_LIMIT to 95% in .env ✓"
+fi
+
 # Load env vars for use in this script
 set -a
 # shellcheck disable=SC1090

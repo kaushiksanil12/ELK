@@ -82,6 +82,12 @@ info "Elasticsearch is reachable and healthy (status: ${HEALTH_STATUS}) ✓"
 # ─── 1. Apply Elasticsearch Cluster Settings ──────────────────────────────────
 section "1. Applying Cluster Settings"
 
+# Ensure parent circuit breaker is at least 95% (prevents Fleet setup and HTTP request exceptions)
+BREAKER_LIMIT="${ES_CIRCUIT_BREAKER_TOTAL_LIMIT:-95%}"
+if [[ "${BREAKER_LIMIT}" == "70%" ]]; then
+  BREAKER_LIMIT="95%"
+fi
+
 SETTINGS=$(cat <<EOF
 {
   "persistent": {
@@ -89,7 +95,8 @@ SETTINGS=$(cat <<EOF
     "indices.recovery.max_bytes_per_sec":                       "${ES_RECOVERY_MAX_BYTES_PER_SEC:-40mb}",
     "cluster.routing.allocation.disk.watermark.low":            "${ES_WATERMARK_LOW:-85%}",
     "cluster.routing.allocation.disk.watermark.high":           "${ES_WATERMARK_HIGH:-90%}",
-    "cluster.routing.allocation.disk.watermark.flood_stage":    "${ES_WATERMARK_FLOOD_STAGE:-95%}"
+    "cluster.routing.allocation.disk.watermark.flood_stage":    "${ES_WATERMARK_FLOOD_STAGE:-95%}",
+    "indices.breaker.total.limit":                              "${BREAKER_LIMIT}"
   }
 }
 EOF
@@ -105,6 +112,7 @@ if echo "${SETTINGS_RESP}" | grep -q '"acknowledged":true'; then
   info "Cluster settings updated ✓"
   info "  Max shards/node: ${ES_MAX_SHARDS_PER_NODE:-1000}"
   info "  Disk watermarks: Low=${ES_WATERMARK_LOW:-85%}, High=${ES_WATERMARK_HIGH:-90%}, Flood=${ES_WATERMARK_FLOOD_STAGE:-95%}"
+  info "  Circuit breaker: Total limit=${BREAKER_LIMIT}"
 else
   warn "Cluster settings response: ${SETTINGS_RESP}"
 fi

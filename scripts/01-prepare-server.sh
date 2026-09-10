@@ -336,6 +336,11 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   fi
 else
   info ".env file already exists ✓"
+  if grep -q "ES_CIRCUIT_BREAKER_TOTAL_LIMIT=70%" "${ENV_FILE}" 2>/dev/null; then
+    sed -i.bak "s/ES_CIRCUIT_BREAKER_TOTAL_LIMIT=70%/ES_CIRCUIT_BREAKER_TOTAL_LIMIT=95%/" "${ENV_FILE}"
+    rm -f "${ENV_FILE}.bak"
+    info "Updated ES_CIRCUIT_BREAKER_TOTAL_LIMIT to 95% in existing .env ✓"
+  fi
 fi
 
 # Ensure non-root ownership so the invoking user can manage the stack without root

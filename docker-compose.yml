@@ -127,9 +127,9 @@ services:
       - cluster.max_shards_per_node=${ES_MAX_SHARDS_PER_NODE}
       - indices.recovery.max_bytes_per_sec=${ES_RECOVERY_MAX_BYTES_PER_SEC}
       - indices.fielddata.cache.size=${ES_INDICES_FIELDDATA_CACHE_SIZE}
-      - indices.breaker.request.limit=${ES_CIRCUIT_BREAKER_REQUEST_LIMIT}
-      - indices.breaker.total.limit=${ES_CIRCUIT_BREAKER_TOTAL_LIMIT}
-      - indices.breaker.fielddata.limit=${ES_CIRCUIT_BREAKER_FIELDDATA_LIMIT}
+      - indices.breaker.request.limit=${ES_CIRCUIT_BREAKER_REQUEST_LIMIT:-60%}
+      - indices.breaker.total.limit=${ES_CIRCUIT_BREAKER_TOTAL_LIMIT:-95%}
+      - indices.breaker.fielddata.limit=${ES_CIRCUIT_BREAKER_FIELDDATA_LIMIT:-40%}
 
       # Disk watermarks
       - cluster.routing.allocation.disk.watermark.low=${ES_WATERMARK_LOW}
