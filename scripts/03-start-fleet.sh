@@ -20,6 +20,13 @@ section "Fleet Server Setup"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Auto-activate docker group in current session if newly added
+if ! docker info >/dev/null 2>&1; then
+  if command -v sg >/dev/null 2>&1 && sg docker -c "docker info" >/dev/null 2>&1; then
+    exec sg docker -c "$0 $*"
+  fi
+fi
+
 # ── Check .env ─────────────────────────────────────────────────────────────────
 if [ ! -f "${ROOT_DIR}/.env" ]; then
   error ".env file not found. Please run ./scripts/02-start-elk.sh first."
