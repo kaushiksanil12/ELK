@@ -59,9 +59,32 @@ fi
 # ── Start Fleet Server ─────────────────────────────────────────────────────────
 section "Starting Fleet Server Container"
 
-CERTS_VOL=$(docker volume ls --format '{{.Name}}' | grep 'certs' | head -1)
-FLEET_VOL=$(docker volume ls --format '{{.Name}}' | grep 'fleetdata\|fleet' | head -1)
-NETWORK=$(docker network ls --format '{{.Name}}' | grep 'elk\|default' | head -1)
+CERTS_VOL=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep 'certs' | head -1 || true)
+if [[ -z "${CERTS_VOL}" ]]; then
+  error "Certs volume not found. Please ensure ELK is running (./scripts/02-start-elk.sh) first."
+  exit 1
+fi
+
+FLEET_VOL=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E 'fleetdata|fleet' | head -1 || true)
+if [[ -z "${FLEET_VOL}" ]]; then
+  # Derive name from certs volume prefix if available (e.g. elk_certs -> elk_fleetdata)
+  if [[ "${CERTS_VOL}" =~ ^(.*_)certs$ ]]; then
+    FLEET_VOL="${BASH_REMATCH[1]}fleetdata"
+  else
+    FLEET_VOL="${FLEET_DATA_VOLUME:-elk_fleetdata}"
+  fi
+  info "Creating fleet data volume: ${FLEET_VOL}..."
+  docker volume create "${FLEET_VOL}" >/dev/null
+fi
+
+NETWORK=$(docker network ls --format '{{.Name}}' 2>/dev/null | grep -E 'elk.*default|elk_default' | head -1 || true)
+if [[ -z "${NETWORK}" ]]; then
+  NETWORK=$(docker network ls --format '{{.Name}}' 2>/dev/null | grep 'elk' | head -1 || true)
+fi
+if [[ -z "${NETWORK}" ]]; then
+  error "ELK network not found. Please ensure ELK is running (./scripts/02-start-elk.sh) first."
+  exit 1
+fi
 
 info "Using network:     ${NETWORK}"
 info "Using certs vol:   ${CERTS_VOL}"

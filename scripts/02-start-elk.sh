@@ -195,6 +195,7 @@ info "Directories ready ✓"
 # ─── Handle --down / --clean ──────────────────────────────────────────────────
 if [[ "${ACTION}" == "down" ]]; then
   section "Stopping Containers"
+  docker rm -f fleet-server 2>/dev/null || true
   docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" down
   info "Stack stopped (volumes preserved)."
   exit 0
@@ -204,7 +205,9 @@ if [[ "${ACTION}" == "clean" ]]; then
   section "⚠️  Removing Containers AND Volumes"
   warn "This will DELETE all ELK data. Sleeping 5 s — press Ctrl-C to abort..."
   sleep 5
+  docker rm -f fleet-server 2>/dev/null || true
   docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" down -v --remove-orphans
+  docker volume rm -f elk_fleetdata fleetdata 2>/dev/null || true
   info "Stack and volumes removed."
   exit 0
 fi
