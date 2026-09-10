@@ -110,11 +110,11 @@ case "${OS}" in
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
     apt-get install -y --no-install-recommends \
-      ca-certificates curl gnupg lsb-release openssl jq unzip
+      ca-certificates curl gnupg lsb-release openssl jq unzip acl
     info "Base packages installed ✓"
     ;;
   rhel)
-    yum install -y curl openssl jq unzip ca-certificates
+    yum install -y curl openssl jq unzip ca-certificates acl
     info "Base packages installed ✓"
     ;;
   darwin)
@@ -125,7 +125,7 @@ case "${OS}" in
     ;;
 esac
 
-# ─── 3. Install Docker, Configure Group & Permissions ─────────────────────────
+# ─── 3. Install Docker & Configure User/Group Permissions ─────────────────────
 section "3. Checking Docker & Configuring User/Group Permissions"
 
 install_docker() {
@@ -165,6 +165,10 @@ else
 fi
 
 if [[ "${OS}" != "darwin" ]]; then
+  # Ensure docker daemon is started
+  systemctl enable docker 2>/dev/null || true
+  systemctl start docker 2>/dev/null || true
+
   # Ensure docker group exists
   if ! getent group docker >/dev/null 2>&1; then
     groupadd docker
@@ -173,19 +177,39 @@ if [[ "${OS}" != "darwin" ]]; then
     info "'docker' group already exists ✓"
   fi
 
-  # Add TARGET_USER to docker group
+  # Add TARGET_USER to docker group for permanent future sessions
   if [[ -n "${TARGET_USER}" ]]; then
     usermod -aG docker "${TARGET_USER}"
     info "Added user '${TARGET_USER}' to 'docker' group ✓"
   fi
 
-  # Ensure Docker socket permissions are correct
-  if [[ -S /var/run/docker.sock ]]; then
-    chown root:docker /var/run/docker.sock
-    chmod 660 /var/run/docker.sock
+  # Configure systemd socket override so /var/run/docker.sock retains non-root access
+  if systemctl list-unit-files docker.socket >/dev/null 2>&1; then
+    mkdir -p /etc/systemd/system/docker.socket.d
+    cat > /etc/systemd/system/docker.socket.d/override.conf <<'EOF'
+[Socket]
+SocketMode=0666
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl restart docker.socket 2>/dev/null || true
   fi
 
-  systemctl restart docker 2>/dev/null || true
+  # Ensure Docker socket permissions allow immediate access in active session without re-login
+  if [[ -S /var/run/docker.sock ]]; then
+    chown root:docker /var/run/docker.sock 2>/dev/null || true
+    chmod 666 /var/run/docker.sock 2>/dev/null || true
+    if command -v setfacl >/dev/null 2>&1 && [[ -n "${TARGET_USER}" ]]; then
+      setfacl -m "u:${TARGET_USER}:rw" /var/run/docker.sock 2>/dev/null || true
+    fi
+    info "Configured Docker socket permissions ('docker ps' works immediately without sudo) ✓"
+  fi
+
+  # Verify non-root access
+  if [[ -n "${TARGET_USER}" && "${TARGET_USER}" != "root" ]]; then
+    if su -s /bin/bash "${TARGET_USER}" -c "docker ps" >/dev/null 2>&1; then
+      info "Verified non-root access: '${TARGET_USER}' can run 'docker ps' without sudo ✓"
+    fi
+  fi
 fi
 
 # ─── 4. Configure Swap File (Emergency OOM Protection) ────────────────────────
@@ -345,8 +369,7 @@ if [[ -n "${AUTO_ELASTIC_PW:-}" ]]; then
   echo ""
 fi
 echo "  Next steps to start the stack:"
-echo "    1. If currently logged in as '${TARGET_USER:-root}', activate docker group:"
-echo "       newgrp docker    (or log out and log back in)"
+echo "    1. Verify Docker works:     docker ps  (works immediately without sudo!)"
 echo "    2. Review/edit settings:    nano .env"
 echo "    3. Start the ELK stack:     ./scripts/02-start-elk.sh"
 echo "    4. Start Fleet Server:      ./scripts/03-start-fleet.sh"

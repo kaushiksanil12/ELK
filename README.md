@@ -184,11 +184,11 @@ sudo ./scripts/01-prepare-server.sh
 ```
 This script automatically:
 1. Installs Docker Engine and the Docker Compose plugin (v2).
-2. Creates the `docker` group, adds your non-root user (e.g. `ubuntu`), and fixes Docker socket permissions so `sudo` is never needed for running containers.
-3. Allocates and enables a **4GB swapfile** with `vm.swappiness=1` (vital emergency OOM protection for cloud VPS instances).
+2. Creates the `docker` group, adds your non-root user (`ubuntu`), and configures Docker permissions so running `docker ps` works immediately without `sudo`.
+3. Allocates and enables a **4GB swapfile** with `vm.swappiness=1` (vital emergency OOM protection for cloud instances).
 4. Configures and persists `vm.max_map_count=262144` and security limits in `/etc/sysctl.d/99-elk.conf`.
-5. Installs `curl`, `openssl`, `jq`, and `unzip`.
-6. Generates a secure `.env` file with strong, 32-character random passwords if none exists and transfers ownership to your non-root user.
+5. Installs base utilities (`curl`, `openssl`, `jq`, `unzip`, and `acl`).
+6. Generates a secure `.env` file with strong, 32-character random passwords if none exists and transfers project ownership to your non-root user.
 
 ### Step 2 — Review Configuration
 Inspect and customize `.env` (ensure IP or domain is set):
