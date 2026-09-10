@@ -70,6 +70,38 @@ info "Architecture:      $(uname -m)"
 info "Total RAM:         $(free -h 2>/dev/null | awk '/^Mem:/ {print $2}' || echo 'N/A')"
 info "Free Disk Space:   $(df -h "${SCRIPT_DIR}" | awk 'NR==2 {print $4}')"
 
+# ── Detect Target Non-Root User ───────────────────────────────────────────────
+TARGET_USER=""
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+  TARGET_USER="${SUDO_USER}"
+else
+  # Check standard cloud image users
+  for u in ubuntu ec2-user debian centos admin; do
+    if id "${u}" >/dev/null 2>&1; then
+      TARGET_USER="${u}"
+      break
+    fi
+  done
+  # Fallback: check who owns the repo directory
+  if [[ -z "${TARGET_USER}" ]]; then
+    DIR_OWNER=$(stat -c '%U' "${ROOT_DIR}" 2>/dev/null || stat -f '%Su' "${ROOT_DIR}" 2>/dev/null || echo "")
+    if [[ -n "${DIR_OWNER}" && "${DIR_OWNER}" != "root" ]]; then
+      TARGET_USER="${DIR_OWNER}"
+    fi
+  fi
+fi
+
+# If on a pure root VPS with no regular user, create standard 'elk' user
+if [[ -z "${TARGET_USER}" && "${OS}" != "darwin" ]]; then
+  TARGET_USER="elk"
+  if ! id "${TARGET_USER}" >/dev/null 2>&1; then
+    useradd -m -s /bin/bash "${TARGET_USER}"
+    info "Created dedicated non-root user '${TARGET_USER}' ✓"
+  fi
+fi
+
+info "Managing User:     ${TARGET_USER:-root}"
+
 # ─── 2. Install Required Base Utilities ────────────────────────────────────────
 section "2. Installing Base Utilities"
 
@@ -93,8 +125,8 @@ case "${OS}" in
     ;;
 esac
 
-# ─── 3. Install Docker & Docker Compose ────────────────────────────────────────
-section "3. Checking Docker & Docker Compose"
+# ─── 3. Install Docker, Configure Group & Permissions ─────────────────────────
+section "3. Checking Docker & Configuring User/Group Permissions"
 
 install_docker() {
   info "Installing Docker Engine via official script..."
@@ -132,14 +164,77 @@ else
   exit 1
 fi
 
-# Add invoking user to docker group if SUDO_USER is set
-if [[ -n "${SUDO_USER:-}" ]]; then
-  usermod -aG docker "${SUDO_USER}" 2>/dev/null || true
-  info "Added user '${SUDO_USER}' to 'docker' group ✓"
+if [[ "${OS}" != "darwin" ]]; then
+  # Ensure docker group exists
+  if ! getent group docker >/dev/null 2>&1; then
+    groupadd docker
+    info "Created 'docker' group ✓"
+  else
+    info "'docker' group already exists ✓"
+  fi
+
+  # Add TARGET_USER to docker group
+  if [[ -n "${TARGET_USER}" ]]; then
+    usermod -aG docker "${TARGET_USER}"
+    info "Added user '${TARGET_USER}' to 'docker' group ✓"
+  fi
+
+  # Ensure Docker socket permissions are correct
+  if [[ -S /var/run/docker.sock ]]; then
+    chown root:docker /var/run/docker.sock
+    chmod 660 /var/run/docker.sock
+  fi
+
+  systemctl restart docker 2>/dev/null || true
 fi
 
-# ─── 4. Configure Kernel Settings for Elasticsearch ───────────────────────────
-section "4. Kernel Tuning (vm.max_map_count)"
+# ─── 4. Configure Swap File (Emergency OOM Protection) ────────────────────────
+section "4. Swap File & Memory Protection"
+
+if [[ "${OS}" != "darwin" ]]; then
+  CURRENT_SWAP_MB=$(free -m | awk '/^Swap:/ {print $2}')
+  if [[ "${CURRENT_SWAP_MB:-0}" -eq 0 ]]; then
+    SWAP_FILE="/swapfile"
+    SWAP_SIZE_GB=4
+
+    # If disk space is tight (< 15GB free), allocate 2GB swap
+    FREE_DISK_MB=$(df -m / | awk 'NR==2 {print $4}')
+    if [[ "${FREE_DISK_MB}" -lt 15360 ]]; then
+      SWAP_SIZE_GB=2
+    fi
+
+    info "No swap partition detected. Allocating ${SWAP_SIZE_GB}GB swap file at ${SWAP_FILE}..."
+    if command -v fallocate >/dev/null 2>&1; then
+      fallocate -l "${SWAP_SIZE_GB}G" "${SWAP_FILE}" 2>/dev/null || dd if=/dev/zero of="${SWAP_FILE}" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=progress
+    else
+      dd if=/dev/zero of="${SWAP_FILE}" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=progress
+    fi
+
+    chmod 600 "${SWAP_FILE}"
+    mkswap "${SWAP_FILE}" >/dev/null
+    swapon "${SWAP_FILE}"
+
+    # Persist in /etc/fstab if not already present
+    if ! grep -q "${SWAP_FILE}" /etc/fstab; then
+      echo "${SWAP_FILE} none swap sw 0 0" >> /etc/fstab
+      info "Added ${SWAP_FILE} to /etc/fstab for persistence on reboot ✓"
+    fi
+
+    # Set vm.swappiness=1 (prevents swapping JVM memory unless RAM is completely exhausted)
+    sysctl -w vm.swappiness=1 >/dev/null
+    echo "vm.swappiness=1" > /etc/sysctl.d/99-swappiness.conf
+    info "${SWAP_SIZE_GB}GB swap created and enabled with vm.swappiness=1 ✓"
+  else
+    info "Swap already configured: $(free -h | awk '/^Swap:/ {print $2}') ✓"
+    sysctl -w vm.swappiness=1 >/dev/null 2>&1 || true
+    echo "vm.swappiness=1" > /etc/sysctl.d/99-swappiness.conf 2>/dev/null || true
+  fi
+else
+  info "macOS detected — swap is managed automatically by macOS ✓"
+fi
+
+# ─── 5. Configure Kernel Settings for Elasticsearch ───────────────────────────
+section "5. Kernel Tuning (vm.max_map_count)"
 
 if [[ "${OS}" != "darwin" ]]; then
   TARGET_MAP_COUNT=262144
@@ -168,8 +263,8 @@ else
   info "macOS detected — Docker Desktop manages memory maps automatically ✓"
 fi
 
-# ─── 5. Directory Structure & Permissions ─────────────────────────────────────
-section "5. Preparing Directories & Permissions"
+# ─── 6. Directory Structure & Permissions ─────────────────────────────────────
+section "6. Preparing Directories & Permissions"
 
 mkdir -p "${ROOT_DIR}/letsencrypt"
 mkdir -p "${ROOT_DIR}/certbot-www"
@@ -181,8 +276,8 @@ chmod 755 "${ROOT_DIR}/scripts"
 
 info "Directory structure verified ✓"
 
-# ─── 6. Generate .env File if Missing ─────────────────────────────────────────
-section "6. Configuration File (.env)"
+# ─── 7. Generate .env File if Missing ─────────────────────────────────────────
+section "7. Configuration File (.env)"
 
 generate_password() {
   if command -v openssl >/dev/null 2>&1; then
@@ -220,10 +315,10 @@ else
 fi
 
 # Ensure non-root ownership so the invoking user can manage the stack without root
-if [[ -n "${SUDO_USER:-}" ]]; then
-  TARGET_GROUP=$(id -gn "${SUDO_USER}" 2>/dev/null || echo "${SUDO_USER}")
-  chown -R "${SUDO_USER}:${TARGET_GROUP}" "${ROOT_DIR}"
-  info "Transferred ownership of project directory to '${SUDO_USER}:${TARGET_GROUP}' (non-root access enabled) ✓"
+if [[ -n "${TARGET_USER}" ]]; then
+  TARGET_GROUP=$(id -gn "${TARGET_USER}" 2>/dev/null || echo "${TARGET_USER}")
+  chown -R "${TARGET_USER}:${TARGET_GROUP}" "${ROOT_DIR}"
+  info "Transferred ownership of project directory to '${TARGET_USER}:${TARGET_GROUP}' (non-root access enabled) ✓"
 fi
 
 # Ensure .env has restricted permissions (read/write only by owner)
@@ -234,6 +329,8 @@ section "🎉 Server Preparation Complete!"
 
 echo -e "${BOLD}"
 echo "  Your server is fully prepared for the ELK Stack."
+echo "  • Managing User:   ${TARGET_USER:-root} (added to 'docker' group)"
+echo "  • Active Swap:     $(free -h 2>/dev/null | awk '/^Swap:/ {print $2}' || echo 'N/A') (vm.swappiness=1)"
 echo ""
 if [[ -n "${AUTO_ELASTIC_PW:-}" ]]; then
   echo "  ┌─────────────────────────────────────────────────────────────┐"
@@ -248,10 +345,12 @@ if [[ -n "${AUTO_ELASTIC_PW:-}" ]]; then
   echo ""
 fi
 echo "  Next steps to start the stack:"
-echo "    1. Review/edit settings:    nano .env"
-echo "    2. Start the ELK stack:     ./scripts/02-start-elk.sh"
-echo "    3. Start Fleet Server:      ./scripts/03-start-fleet.sh"
-echo "    4. Configure S3 backup:     ./scripts/04-setup-s3-backup.sh"
+echo "    1. If currently logged in as '${TARGET_USER:-root}', activate docker group:"
+echo "       newgrp docker    (or log out and log back in)"
+echo "    2. Review/edit settings:    nano .env"
+echo "    3. Start the ELK stack:     ./scripts/02-start-elk.sh"
+echo "    4. Start Fleet Server:      ./scripts/03-start-fleet.sh"
+echo "    5. Configure S3 backup:     ./scripts/04-setup-s3-backup.sh"
 echo ""
 echo "  To update ILM retention or templates later without running 02-start-elk.sh:"
 echo "    ./scripts/update-policies.sh"

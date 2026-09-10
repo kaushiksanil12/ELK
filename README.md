@@ -183,10 +183,12 @@ Run the preparation script on a clean Linux server:
 sudo ./scripts/01-prepare-server.sh
 ```
 This script automatically:
-1. Installs Docker Engine and the Docker Compose plugin.
-2. Configures and persists `vm.max_map_count=262144` and security limits in `/etc/sysctl.d/99-elk.conf`.
-3. Installs `curl`, `openssl`, `jq`, and `unzip`.
-4. Generates a secure `.env` file with strong, 32-character random passwords if none exists.
+1. Installs Docker Engine and the Docker Compose plugin (v2).
+2. Creates the `docker` group, adds your non-root user (e.g. `ubuntu`), and fixes Docker socket permissions so `sudo` is never needed for running containers.
+3. Allocates and enables a **4GB swapfile** with `vm.swappiness=1` (vital emergency OOM protection for cloud VPS instances).
+4. Configures and persists `vm.max_map_count=262144` and security limits in `/etc/sysctl.d/99-elk.conf`.
+5. Installs `curl`, `openssl`, `jq`, and `unzip`.
+6. Generates a secure `.env` file with strong, 32-character random passwords if none exists and transfers ownership to your non-root user.
 
 ### Step 2 — Review Configuration
 Inspect and customize `.env` (ensure IP or domain is set):
@@ -614,7 +616,7 @@ After resetting:
 
 | Script | How it Works |
 |---|---|
-| **`01-prepare-server.sh`** | Verifies root privileges, detects distro (`apt` vs `yum`), installs Docker & Compose v2, tunes kernel memory maps (`vm.max_map_count=262144`), increases file descriptors (`limits.conf`), and generates `.env` with random 32-character keys. |
+| **`01-prepare-server.sh`** | Verifies root privileges, detects distro, installs Docker & Compose v2, creates `docker` group, adds non-root user, allocates a 4GB swapfile with `vm.swappiness=1`, tunes memory maps (`vm.max_map_count=262144`), increases file limits, and generates `.env` with random keys. |
 | **`02-start-elk.sh`** | Loads `.env`, provisions Let's Encrypt certificates (if domain provided), starts containers via `docker compose up -d`, waits for healthchecks on ports `9200` and `5601`, configures Fleet output fingerprints, and invokes `update-policies.sh`. |
 | **`03-start-fleet.sh`** | Prompts for the Kibana enrollment token, detects the Docker network and `certs` volume, and launches the `fleet-server` container connected to Elasticsearch with root CA certificates mounted. |
 | **`04-setup-s3-backup.sh`** | Injects AWS keys into the secure Elasticsearch keystore (`elasticsearch-keystore add s3.client.default...`), reloads secure settings, registers the S3 snapshot repository, and creates the daily SLM policy. |
