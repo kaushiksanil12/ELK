@@ -347,6 +347,18 @@ if [[ -n "${ELK_SERVER_DOMAIN}" ]]; then
   else
     warn "Failed to clear Fleet fingerprint. You may need to do it manually in Kibana UI."
   fi
+
+  # Configure Fleet Server host in Kibana settings so agents know where to check in
+  FLEET_HOST_URL="https://${ELK_SERVER_DOMAIN}:${FLEET_SERVER_PORT:-8220}"
+  escurl \
+    -X PUT \
+    -H "kbn-xsrf: true" \
+    -H "Content-Type: application/json" \
+    "https://localhost:${KIBANA_PORT}/api/fleet/settings" \
+    -d '{
+      "fleet_server_hosts": ["'"${FLEET_HOST_URL}"'"]
+    }' >/dev/null 2>&1 || true
+  info "Configured Fleet Server host (${FLEET_HOST_URL}) ✓"
 fi
 
 # ─── Health Summary ───────────────────────────────────────────────────────────
