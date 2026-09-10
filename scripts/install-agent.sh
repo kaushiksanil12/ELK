@@ -72,6 +72,16 @@ done
 [[ -z "${FLEET_URL}"         ]] && { error "--fleet-url is required"; usage; }
 [[ -z "${ENROLLMENT_TOKEN}"  ]] && { error "--token is required";     usage; }
 
+# Strip trailing slashes
+FLEET_URL="${FLEET_URL%/}"
+
+# Ensure FLEET_URL includes port (defaults to 8220 if omitted)
+if [[ ! "${FLEET_URL}" =~ :[0-9]+$ ]]; then
+  warn "No port specified in --fleet-url '${FLEET_URL}'. Fleet Server listens on port 8220 by default."
+  info "Automatically appending port :8220 -> ${FLEET_URL}:8220"
+  FLEET_URL="${FLEET_URL}:8220"
+fi
+
 # ─── Must run as root ─────────────────────────────────────────────────────────
 if [[ "${EUID}" -ne 0 ]]; then
   error "This script must be run as root (use sudo)."
